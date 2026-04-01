@@ -109,6 +109,10 @@ Environment Configuration Settings
 - **KUBERNETES_BOOTSTRAP_LABELS**: a JSON describing names and values of labels used by Patroni as ``kubernetes.bootstrap_labels``. Default is empty.
 - **INITDB_LOCALE**: database cluster's default UTF-8 locale (en_US by default)
 - **ENABLE_WAL_PATH_COMPAT**: old Spilo images were generating wal path in the backup store using the following template ``/spilo/{WAL_BUCKET_SCOPE_PREFIX}{SCOPE}{WAL_BUCKET_SCOPE_SUFFIX}/wal/``, while new images adding one additional directory (``{PGVERSION}``) to the end. In order to avoid (unlikely) issues with restoring WALs (from S3/GC/and so on) when switching to ``spilo-13`` please set the ``ENABLE_WAL_PATH_COMPAT=true`` when deploying old cluster with ``spilo-13`` for the first time. After that the environment variable could be removed. Change of the WAL path also mean that backups stored in the old location will not be cleaned up automatically.
+- **ENABLE_SUPABASE_EXTENSIONS**: opt in to Supabase-specific extension runtime configuration. When set to ``true``, Spilo adds the Supabase preload libraries and extends the extension whitelist for the Supabase-related extensions that are built into the image. The default is ``false`` so these higher-risk surfaces are not enabled automatically.
+- **ENABLE_SUPABASE_INIT**: run the optional Supabase bootstrap SQL during post-init. This requires ``ENABLE_SUPABASE_EXTENSIONS=true`` because the bootstrap assumes those extensions are intentionally enabled.
+- **PGSODIUM_KEY**: hex-encoded 32 byte pgsodium root key provided from a secret-backed environment variable. Required when ``ENABLE_SUPABASE_EXTENSIONS=true`` and pgsodium is used.
+- **PGSODIUM_KEY_FILE**: path to a mounted secret file containing the hex-encoded 32 byte pgsodium root key. This is an alternative to ``PGSODIUM_KEY``.
 - **WALG_DISABLE_S3_SSE** or **WALE_DISABLE_S3_SSE**: by default wal-g is configured to encrypt files uploaded to S3. In order to disable it you can set this environment variable to ``true``.
 - **USE_OLD_LOCALES**: whether to use old locales from Ubuntu 18.04 in the Ubuntu 22.04-based image. Default is false.
 
