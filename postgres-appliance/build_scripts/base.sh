@@ -51,9 +51,25 @@ if [ "$WITH_PERL" != "true" ]; then
     equivs-build perl
 fi
 
-curl -sL "https://github.com/CyberDem0n/bg_mon/archive/$BG_MON_COMMIT.tar.gz" | tar xz
-curl -sL "https://github.com/zalando-pg/pg_auth_mon/archive/$PG_AUTH_MON_COMMIT.tar.gz" | tar xz
-curl -sL "https://github.com/zubkov-andrei/pg_profile/archive/$PG_PROFILE.tar.gz" | tar xz
+curl -fsSL "https://github.com/CyberDem0n/bg_mon/archive/$BG_MON_COMMIT.tar.gz" | tar xz
+curl -fsSL "https://github.com/zubkov-andrei/pg_profile/archive/$PG_PROFILE.tar.gz" | tar xz
+
+# Download Supabase and additional extension sources
+curl -fsSL "https://github.com/michelp/pgsodium/archive/v$PGSODIUM_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/supabase/vault/archive/v$VAULT_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/supabase/pg_net/archive/v$PG_NET_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/supabase/supautils/archive/v$SUPAUTILS_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/pramsey/pgsql-http/archive/v$HTTP_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/eradman/pg-safeupdate/archive/$PG_SAFEUPDATE_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/iCyberon/pg_hashids/archive/$PG_HASHIDS_COMMIT.tar.gz" | tar xz
+curl -fsSL "https://github.com/pgexperts/pg_plan_filter/archive/$PG_PLAN_FILTER_COMMIT.tar.gz" | tar xz
+curl -fsSL "https://github.com/percona/pg_stat_monitor/archive/$PG_STAT_MONITOR_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/aws/pg_tle/archive/v$PG_TLE_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/postgrespro/rum/archive/$RUM_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/michelp/pgjwt/archive/$PGJWT_COMMIT.tar.gz" | tar xz
+curl -fsSL "https://github.com/tembo-io/pgmq/archive/v$PGMQ_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/supabase/index_advisor/archive/v$INDEX_ADVISOR_VERSION.tar.gz" | tar xz
+curl -fsSL "https://github.com/theory/pgtap/archive/v$PGTAP_VERSION.tar.gz" | tar xz
 
 apt-get install -y \
     postgresql-common \
@@ -61,6 +77,7 @@ apt-get install -y \
     libevent-pthreads-2.1 \
     brotli \
     libbrotli1 \
+    libsodium23 \
     python3.10 \
     python3-psycopg2
 
@@ -94,7 +111,8 @@ for version in $DEB_PG_SUPPORTED_VERSIONS; do
                 "postgresql-${version}-pllua"
                 "postgresql-${version}-pgvector"
                 "postgresql-${version}-roaringbitmap"
-                "postgresql-${version}-pgfaceting")
+                "postgresql-${version}-pgfaceting"
+                "postgresql-${version}-pgrouting")
 
         if [ "$version" != "18" ]; then
             EXTRAS+=("postgresql-${version}-pgl-ddl-deploy"

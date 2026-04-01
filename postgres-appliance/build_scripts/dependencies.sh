@@ -34,6 +34,6 @@ else
     PKG_NAME='wal-g-pg-22.04-aarch64'
 fi
 
-curl -sL "https://github.com/wal-g/wal-g/releases/download/$WALG_VERSION/$PKG_NAME.tar.gz" \
+curl -fsSL "https://github.com/wal-g/wal-g/releases/download/$WALG_VERSION/$PKG_NAME.tar.gz" \
             | tar -C /builddeps/wal-g -xz
 mv "/builddeps/wal-g/$PKG_NAME" /builddeps/wal-g/wal-g

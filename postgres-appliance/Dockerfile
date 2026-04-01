@@ -5,7 +5,7 @@ ARG COMPRESS=false
 ARG ADDITIONAL_LOCALES=
 
 
-FROM ubuntu:18.04 as ubuntu-18
+FROM ubuntu:18.04 AS ubuntu-18
 
 ARG ADDITIONAL_LOCALES
 
@@ -14,7 +14,7 @@ COPY build_scripts/locales.sh /builddeps/
 RUN bash /builddeps/locales.sh
 
 
-FROM $BASE_IMAGE as dependencies-builder
+FROM $BASE_IMAGE AS dependencies-builder
 
 ARG DEMO
 
@@ -27,7 +27,7 @@ COPY dependencies/debs /builddeps/
 RUN bash /builddeps/dependencies.sh
 
 
-FROM $BASE_IMAGE as builder-false
+FROM $BASE_IMAGE AS builder-false
 
 ARG DEMO
 ARG ADDITIONAL_LOCALES
@@ -58,7 +58,27 @@ ENV POSTGIS_VERSION=3.6 \
     PG_MON_COMMIT=88ac7b58348aa061c814982defc170644f368f39 \
     PLPROFILER=REL4_2_5 \
     PG_PROFILE=4.11 \
-    PAM_OAUTH2=v1.0.1
+    PAM_OAUTH2=v1.0.1 \
+    CURL_VERSION=8.10.1 \
+    CURL_TARBALL_SHA256=d15ebab765d793e2e96db090f0e172d127859d78ca6f6391d7eafecfd894bbc0 \
+    PGSODIUM_VERSION=3.1.8 \
+    VAULT_VERSION=0.3.1 \
+    PG_NET_VERSION=0.20.0 \
+    SUPAUTILS_VERSION=2.8.0 \
+    HTTP_VERSION=1.6.1 \
+    PG_SAFEUPDATE_VERSION=1.4 \
+    PG_HASHIDS_COMMIT=cd0e1b31d52b394a0df64079406a14a4f7387cd6 \
+    PG_PLAN_FILTER_COMMIT=5081a7b5cb890876e67d8e7486b6a64c38c9a492 \
+    PG_STAT_MONITOR_VERSION=2.1.0 \
+    PG_TLE_VERSION=1.4.0 \
+    RUM_VERSION=1.3.14 \
+    PGJWT_COMMIT=f3d82fd30151e754e19ce5d6a06c71c20689ce3d \
+    PGMQ_VERSION=1.5.1 \
+    INDEX_ADVISOR_VERSION=0.2.0 \
+    PGTAP_VERSION=1.3.3 \
+    PG_GRAPHQL_VERSION=1.5.12 \
+    PG_JSONSCHEMA_VERSION=0.3.4 \
+    WRAPPERS_VERSION=0.6.0
 
 WORKDIR /builddeps
 RUN bash base.sh
@@ -78,7 +98,7 @@ RUN bash /builddeps/patroni.sh
 RUN if [ "$COMPRESS" = "true" ]; then bash /builddeps/compress_build.sh; fi
 
 
-FROM scratch as builder-true
+FROM scratch AS builder-true
 COPY --from=builder-false / /
 
 

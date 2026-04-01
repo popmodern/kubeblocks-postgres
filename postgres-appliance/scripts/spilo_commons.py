@@ -15,10 +15,34 @@ extensions = {
     'timescaledb':    (9.6, 18, True,  True),
     'pg_cron':        (9.5, 18, True,  False),
     'pg_stat_kcache': (9.4, 18, True,  False),
-    'pg_partman':     (9.4, 18, False, True)
+    'pg_partman':     (9.4, 18, False, True),
 }
 if os.environ.get('ENABLE_PG_MON') == 'true':
     extensions['pg_mon'] = (11,  18, True,  False)
+
+if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true':
+    extensions.update({
+        'pgsodium':        (14, 18, True,  False),
+        'pg_net':          (14, 18, True,  True),
+        'pg_tle':          (14, 18, True,  True),
+        'pg_stat_monitor': (14, 18, True,  True),
+        'pg_plan_filter':  (14, 18, True,  False),
+        'supautils':       (14, 18, True,  False),
+        'pgjwt':           (14, 18, False, True),
+        'pgtap':           (14, 18, False, True),
+        'pgmq':            (14, 18, False, True),
+        'pg_hashids':      (14, 18, False, True),
+        'pg_graphql':      (14, 18, False, True),
+        'pg_jsonschema':   (14, 18, False, True),
+        'safeupdate':      (14, 18, False, True),
+        'vault':           (14, 18, False, True),
+        'http':            (14, 18, False, True),
+        'rum':             (14, 18, False, True),
+        'index_advisor':   (14, 18, False, True),
+        'wrappers':        (14, 18, False, True),
+        'pgroonga':        (14, 18, False, True),
+        'pgrouting':       (14, 18, False, True),
+    })
 
 
 def adjust_extensions(old, version, extwlist=False):

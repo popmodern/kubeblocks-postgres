@@ -6,7 +6,7 @@ echo -e 'APT::Install-Recommends "0";\nAPT::Install-Suggests "0";' > /etc/apt/ap
 
 apt-get update
 apt-get -y upgrade
-apt-get install -y curl ca-certificates less locales jq vim-tiny gnupg1 cron runit dumb-init libcap2-bin rsync sysstat gpg
+apt-get install -y curl ca-certificates less locales jq vim-tiny gnupg1 cron runit dumb-init libcap2-bin rsync sysstat gpg openssl
 
 ln -s chpst /usr/bin/envdir
 
