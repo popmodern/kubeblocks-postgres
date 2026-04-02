@@ -44,8 +44,11 @@ jobs:
     - name: Test spilo docker image
       env:
         SPILO_TEST_IMAGE: spilo
-        SPILO_SUPABASE_TEST_IMAGE: spilo-supabase
       run: bash postgres-appliance/tests/test_spilo.sh
+    - name: Test Supabase bootstrap flow
+      env:
+        SPILO_SUPABASE_TEST_IMAGE: spilo-supabase
+      run: bash postgres-appliance/tests/test_supabase.sh
     - name: Test USE_OLD_LOCALES
       run: bash -x postgres-appliance/tests/locales_test/test_locales.sh
       if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_locales_test)

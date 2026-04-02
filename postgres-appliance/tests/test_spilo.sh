@@ -8,7 +8,6 @@ source ./test_utils.sh
 readonly PREFIX="demo-"
 readonly UPGRADE_SCRIPT="python3 /scripts/inplace_upgrade.py"
 readonly TIMEOUT=120
-readonly SUPABASE_TIMEOUT=300
 
 
 function cleanup() {
@@ -358,18 +357,6 @@ function verify_default_preload_libraries() {
     ! csv_has_extension "$preload" supautils
 }
 
-function verify_supabase_extension_whitelist() {
-    local whitelist
-    whitelist=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW extwlist.extensions\"")
-
-    csv_has_extension "$whitelist" pg_graphql &&
-    csv_has_extension "$whitelist" pg_jsonschema &&
-    csv_has_extension "$whitelist" pgjwt &&
-    csv_has_extension "$whitelist" pgmq &&
-    csv_has_extension "$whitelist" supabase_vault &&
-    csv_has_extension "$whitelist" wrappers
-}
-
 function verify_default_created_extensions() {
     local count
     count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_extension WHERE extname IN ('pg_auth_mon','pg_cron','file_fdw','pg_stat_statements','pg_stat_kcache','set_user','pg_mon')\"")
@@ -385,117 +372,6 @@ function verify_hourly_log_rotation() {
     postgres_failed_auth_views=$(docker_exec "$1" "psql -U postgres -tAc \"SELECT count(*) FROM pg_views WHERE viewname LIKE 'failed_authentication_%'\"")
 
     [ "$log_rotation_age" = "1h" ] && [ "$log_filename" = "postgresql-%u-%H.log" ] && [ "$postgres_log_ftables" -eq 192 ] && [ "$postgres_log_views" -eq 8 ] && [ "$postgres_failed_auth_views" -eq 200 ]
-}
-
-function verify_supabase_wal_level() {
-    local wal_level
-    wal_level=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW wal_level\"")
-    [ "$wal_level" = "logical" ]
-}
-
-function verify_supabase_roles() {
-    local count
-    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_roles WHERE rolname IN ('anon','authenticated','authenticator','dashboard_user','pgbouncer','service_role','supabase_admin','supabase_auth_admin','supabase_etl_admin','supabase_read_only_user','supabase_replication_admin','supabase_storage_admin')\"")
-    [ "$count" = "12" ]
-}
-
-function verify_supabase_schemas() {
-    local count
-    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('auth','extensions','graphql','graphql_public','pgbouncer','realtime','storage','vault')\"")
-    [ "$count" = "8" ]
-}
-
-function verify_supabase_extensions() {
-    local count
-    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE (e.extname = 'pg_stat_statements' AND n.nspname = 'extensions') OR (e.extname = 'pg_graphql' AND n.nspname = 'graphql') OR (e.extname = 'pgcrypto' AND n.nspname = 'extensions') OR (e.extname = 'supabase_vault' AND n.nspname = 'vault') OR (e.extname = 'uuid-ossp' AND n.nspname = 'extensions')\"")
-    [ "$count" = "5" ]
-}
-
-function verify_supabase_pgbouncer_auth() {
-    local count
-    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'pgbouncer' AND p.proname = 'get_auth'\"")
-    [ "$count" = "1" ]
-}
-
-function verify_supabase_migration_marker() {
-    local applied
-    applied=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '20260211120934_supabase_privileged_role')\"")
-    [ "$applied" = "t" ]
-}
-
-function verify_supabase_publication() {
-    local count
-    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_publication WHERE pubname = 'supabase_realtime'\"")
-    [ "$count" = "1" ]
-}
-
-function verify_supabase_custom_hook_rows() {
-    local count
-    local applied_as_count
-    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.supabase_custom_hook_log WHERE hook_name IN ('001-directory-create','002-directory-extra','999-post-migration-file')\"")
-    applied_as_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.supabase_custom_hook_log WHERE hook_name IN ('001-directory-create','002-directory-extra','999-post-migration-file') AND applied_as = 'supabase_admin'\"")
-    [ "$count" = "3" ] && [ "$applied_as_count" = "3" ]
-}
-
-function verify_supabase_custom_tracking() {
-    local count
-    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.spilo_supabase_custom_migrations WHERE identifier IN ('dir:001-directory-create.sql','dir:002-directory-extra.sql','file:/etc/postgresql.schema.sql')\"")
-    [ "$count" = "3" ]
-}
-
-function verify_supabase_custom_idempotence() {
-    local before_count
-    local after_count
-
-    before_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.spilo_supabase_custom_migrations\"")
-    docker_exec "$1" "/scripts/run_supabase_migrations.sh postgres"
-    after_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.spilo_supabase_custom_migrations\"")
-
-    [ "$before_count" = "$after_count" ] && [ "$after_count" = "3" ]
-}
-
-function test_supabase_bootstrap() {
-    local container=$1
-
-    log_info "[TS8] Waiting for Patroni leader on $container..."
-    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
-    log_info "[TS8] Waiting for Supabase bootstrap on $container..."
-    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1" "$SUPABASE_TIMEOUT"
-
-    run_test verify_supabase_wal_level "$container"
-    run_test verify_supabase_roles "$container"
-    run_test verify_supabase_schemas "$container"
-    run_test verify_supabase_extensions "$container"
-    run_test verify_supabase_extension_whitelist "$container"
-    run_test verify_supabase_pgbouncer_auth "$container"
-    run_test verify_supabase_migration_marker "$container"
-    run_test verify_supabase_publication "$container"
-}
-
-function test_supabase_custom_sql() {
-    local container=$1
-
-    log_info "[TS9] Waiting for Patroni leader on $container..."
-    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
-    log_info "[TS9] Waiting for Supabase custom SQL bootstrap on $container..."
-    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3" "$SUPABASE_TIMEOUT"
-
-    run_test verify_supabase_custom_hook_rows "$container"
-    run_test verify_supabase_custom_tracking "$container"
-    run_test verify_supabase_custom_idempotence "$container"
-}
-
-function test_supabase_legacy_custom_sql() {
-    local container=$1
-
-    log_info "[TS10] Waiting for Patroni leader on $container..."
-    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
-    log_info "[TS10] Waiting for legacy Supabase custom SQL bootstrap on $container..."
-    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1" "$SUPABASE_TIMEOUT"
-    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3" "$SUPABASE_TIMEOUT"
-
-    run_test verify_supabase_custom_hook_rows "$container"
-    run_test verify_supabase_custom_tracking "$container"
 }
 
 # TEST SUITE 1 - In-place major upgrade 14->15->16->17
@@ -613,9 +489,6 @@ function test_spilo() {
     log_info "[TS5] Waiting for postgres to start in the $upgrade_replica_container and stream from primary..."
     wait_all_streaming "$upgrade_container" 1
 
-    log_info "[TS8] Prewarming Supabase test containers in background"
-    start_containers supabase supabase-custom supabase-legacy
-
     # TEST SUITE 7
     local hourlylogs_container
     hourlylogs_container=$(start_clone_with_hourly_log_rotation "$upgrade_container")
@@ -640,10 +513,6 @@ function main() {
     local leader
     leader="$PREFIX$(find_leader "${PREFIX}spilo1")"
     test_spilo "$leader"
-
-    test_supabase_bootstrap "${PREFIX}supabase"
-    test_supabase_custom_sql "${PREFIX}supabase-custom"
-    test_supabase_legacy_custom_sql "${PREFIX}supabase-legacy"
 }
 
 trap cleanup QUIT TERM EXIT

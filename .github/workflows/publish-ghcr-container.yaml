@@ -89,8 +89,12 @@ jobs:
     - name: Test container images
       env:
         SPILO_TEST_IMAGE: "${{ steps.image.outputs.NAME }}"
-        SPILO_SUPABASE_TEST_IMAGE: "${{ steps.image.outputs.SUPABASE_NAME }}"
       run: bash postgres-appliance/tests/test_spilo.sh
+
+    - name: Test Supabase bootstrap image
+      env:
+        SPILO_SUPABASE_TEST_IMAGE: "${{ steps.image.outputs.SUPABASE_NAME }}"
+      run: bash postgres-appliance/tests/test_supabase.sh
 
     - name: Build arm64 additionaly and push multiarch image to ghcr
       uses: docker/build-push-action@v7
