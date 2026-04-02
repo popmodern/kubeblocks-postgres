@@ -31,6 +31,19 @@ if [ "$(id -u)" -ne 0 ]; then
     rm "$RW_DIR/tmp/passwd"
 fi
 
+if [ -n "${PGSODIUM_KEY:-}" ] && [ -z "${PGSODIUM_KEY_FILE:-}" ]; then
+    old_umask=$(umask)
+    PGSODIUM_KEY_FILE="$RW_DIR/tmp/pgsodium-root.key"
+
+    umask 077
+    printf '%s' "$PGSODIUM_KEY" | tr -d '[:space:]' > "$PGSODIUM_KEY_FILE"
+    chown postgres: "$PGSODIUM_KEY_FILE"
+    umask "$old_umask"
+
+    export PGSODIUM_KEY_FILE
+    unset PGSODIUM_KEY
+fi
+
 ## Ensure all logfiles exist, most appliances will have
 ## a foreign data wrapper pointing to these files
 for i in $(seq 0 7); do
