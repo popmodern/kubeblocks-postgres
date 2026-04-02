@@ -14,7 +14,12 @@ readonly SUPABASE_TIMEOUT=300
 function cleanup() {
     stop_containers
     local -a containers
-    mapfile -t containers < <(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
+    local container_id
+
+    containers=()
+    while IFS= read -r container_id; do
+        containers+=("$container_id")
+    done < <(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
     if (( ${#containers[@]} > 0 )); then
         docker rm -f "${containers[@]}"
     fi
