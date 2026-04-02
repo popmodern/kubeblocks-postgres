@@ -6,7 +6,7 @@ After building the image, you can test your image by:
     ```
     export SPILO_TEST_IMAGE=<your_spilo_image>
     ```
-2. Run the test:
+2. Run the core Spilo regression suite:
     ```
     bash test_spilo.sh
     ```
@@ -14,8 +14,24 @@ After building the image, you can test your image by:
     ```
     bash -x test_spilo.sh
     ```
+3. Run the dedicated Supabase bootstrap suite when validating Supabase init behavior:
+    ```
+    export SPILO_SUPABASE_TEST_IMAGE=<your_supabase_default_image>
+    bash test_supabase.sh
+    ```
+    To enable debugging for the Supabase suite:
+    ```
+    bash -x test_supabase.sh
+    ```
+
+The suites now have different jobs:
+
+- `test_spilo.sh` covers the main upgrade, clone, replica, whitelist, and hourly log rotation matrix.
+- `test_supabase.sh` covers PG15+ Supabase bootstrap, PG15+ custom SQL hooks, PG14 legacy bootstrap, and PG14 legacy custom SQL hooks.
 
 The test will create multiple containers. They will be cleaned up by the last line before running `main` in `test_spilo.sh`. To keep and debug the containers after running the test, this part can be commented.
 ```
 trap cleanup QUIT TERM EXIT
 ```
+
+The same cleanup advice applies to `test_supabase.sh`.
