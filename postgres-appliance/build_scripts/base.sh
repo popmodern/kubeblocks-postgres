@@ -136,7 +136,6 @@ install_modern_libcurl() {
         make
         make install
     )
-    printf '/usr/local/lib\n' > /etc/ld.so.conf.d/00-spilo-local-libcurl.conf
     rm -f /usr/local/bin/curl /usr/local/bin/curl-config
     ldconfig
     rm -rf "$curl_archive" "$curl_source_dir"

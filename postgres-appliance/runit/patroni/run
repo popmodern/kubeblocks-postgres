@@ -24,9 +24,9 @@ then
 fi
 
 # Only small subset of environment variables is allowed. We don't want accidentally disclose sensitive information
-for E in $(printenv -0 | tr '\n' ' ' | sed 's/\x00/\n/g' | grep -vE '^(KUBERNETES_(SERVICE|PORT|ROLE)[_=]|((POD_(IP|NAMESPACE))|HOSTNAME|PATH|PGHOME|LC_ALL|ENABLE_PG_MON|PGSODIUM_KEY_FILE|LD_LIBRARY_PATH)=)' | sed 's/=.*//g'); do
+for E in $(printenv -0 | tr '\n' ' ' | sed 's/\x00/\n/g' | grep -vE '^(KUBERNETES_(SERVICE|PORT|ROLE)[_=]|((POD_(IP|NAMESPACE))|HOSTNAME|PATH|PGHOME|LC_ALL|ENABLE_PG_MON|PGSODIUM_KEY_FILE)=)' | sed 's/=.*//g'); do
     unset $E
 done
 
 exec 2>&1
-exec $CHRT $CHPST env HOME=/home/postgres LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" patroni /home/postgres/postgres.yml
+exec $CHRT $CHPST env HOME=/home/postgres patroni /home/postgres/postgres.yml

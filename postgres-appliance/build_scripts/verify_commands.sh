@@ -33,16 +33,15 @@ require_libcurl_from_usr_local() {
     fi
 }
 
-require_preferred_libcurl() {
-    first_libcurl=$(ldconfig -p | awk '/libcurl\.so\.4 \(/ {print $NF; exit}')
-    if [ "$first_libcurl" != "/usr/local/lib/libcurl.so.4" ]; then
-        echo "ERROR: ldconfig does not prefer /usr/local/lib/libcurl.so.4 (got ${first_libcurl:-<none>})" >&2
-        ldconfig -p | grep 'libcurl\.so\.4' >&2 || true
+require_system_curl_libcurl() {
+    if ldd /usr/bin/curl | grep -Eq 'libcurl\.so\.4 => /usr/local/lib/'; then
+        echo "ERROR: /usr/bin/curl resolves libcurl.so.4 from /usr/local/lib" >&2
+        ldd /usr/bin/curl >&2
         exit 1
     fi
 }
 
-for command_name in bash sh python3 openssl crontab envdir sv runsvdir psql vacuumdb patroni chpst chrt timeout ldd ldconfig; do
+for command_name in bash sh python3 openssl crontab envdir sv runsvdir psql vacuumdb patroni chpst chrt timeout ldd; do
     require_command "$command_name"
 done
 
@@ -53,7 +52,7 @@ require_executable /usr/bin/pgqd
 require_executable /usr/local/bin/wal-g
 require_file /usr/local/lib/cron_unprivileged.so
 require_file /usr/local/lib/libcurl.so.4
-require_preferred_libcurl
+require_system_curl_libcurl
 
 find /usr/lib/postgresql \( -path '*/lib/pg_net.so' -o -path '*/lib/http.so' \) -print |
 while IFS= read -r extension_lib; do
