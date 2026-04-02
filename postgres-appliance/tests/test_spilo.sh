@@ -441,8 +441,9 @@ function verify_supabase_custom_idempotence() {
 function test_supabase_bootstrap() {
     local container=$1
 
-    log_info "[TS8] Waiting for Supabase bootstrap on $container..."
+    log_info "[TS8] Waiting for Patroni leader on $container..."
     find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    log_info "[TS8] Waiting for Supabase bootstrap on $container..."
     wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1" "$SUPABASE_TIMEOUT"
 
     run_test verify_supabase_wal_level "$container"
@@ -458,8 +459,9 @@ function test_supabase_bootstrap() {
 function test_supabase_custom_sql() {
     local container=$1
 
-    log_info "[TS9] Waiting for Supabase custom SQL bootstrap on $container..."
+    log_info "[TS9] Waiting for Patroni leader on $container..."
     find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    log_info "[TS9] Waiting for Supabase custom SQL bootstrap on $container..."
     wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3" "$SUPABASE_TIMEOUT"
 
     run_test verify_supabase_custom_hook_rows "$container"
@@ -470,8 +472,9 @@ function test_supabase_custom_sql() {
 function test_supabase_legacy_custom_sql() {
     local container=$1
 
-    log_info "[TS10] Waiting for legacy Supabase custom SQL bootstrap on $container..."
+    log_info "[TS10] Waiting for Patroni leader on $container..."
     find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    log_info "[TS10] Waiting for legacy Supabase custom SQL bootstrap on $container..."
     wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1" "$SUPABASE_TIMEOUT"
     wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3" "$SUPABASE_TIMEOUT"
 
@@ -594,6 +597,9 @@ function test_spilo() {
     log_info "[TS5] Waiting for postgres to start in the $upgrade_replica_container and stream from primary..."
     wait_all_streaming "$upgrade_container" 1
 
+    log_info "[TS8] Prewarming Supabase test containers in background"
+    start_containers supabase supabase-custom supabase-legacy
+
     # TEST SUITE 7
     local hourlylogs_container
     hourlylogs_container=$(start_clone_with_hourly_log_rotation "$upgrade_container")
@@ -619,7 +625,6 @@ function main() {
     leader="$PREFIX$(find_leader "${PREFIX}spilo1")"
     test_spilo "$leader"
 
-    start_containers supabase supabase-custom supabase-legacy
     test_supabase_bootstrap "${PREFIX}supabase"
     test_supabase_custom_sql "${PREFIX}supabase-custom"
     test_supabase_legacy_custom_sql "${PREFIX}supabase-legacy"

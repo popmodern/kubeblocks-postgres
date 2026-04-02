@@ -5,6 +5,25 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 export PGOPTIONS="-c synchronous_commit=local -c search_path=pg_catalog"
 
 PGVER=$(psql -d "$2" -XtAc "SELECT pg_catalog.current_setting('server_version_num')::int/10000")
+SUPABASE_EXTENSIONS_ENABLED=${ENABLE_SUPABASE_EXTENSIONS:-}
+SUPABASE_INIT_ENABLED=${ENABLE_SUPABASE_INIT:-}
+
+if [ -z "$SUPABASE_EXTENSIONS_ENABLED" ]; then
+    if [ "$(psql -d "$2" -XtAc "SELECT current_setting('pgsodium.getkey_script', true)")" = "/scripts/pgsodium_getkey.sh" ]; then
+        SUPABASE_EXTENSIONS_ENABLED=true
+    else
+        SUPABASE_EXTENSIONS_ENABLED=false
+    fi
+fi
+
+if [ -z "$SUPABASE_INIT_ENABLED" ]; then
+    if [ "$SUPABASE_EXTENSIONS_ENABLED" = "true" ] && [ "$(psql -d "$2" -XtAc "SHOW wal_level")" = "logical" ]; then
+        SUPABASE_INIT_ENABLED=true
+    else
+        SUPABASE_INIT_ENABLED=false
+    fi
+fi
+
 if [ "$PGVER" -lt 17 ]; then
     RESET_ARGS="oid, oid, bigint"
 else
@@ -323,8 +342,8 @@ done < <(psql -d "$2" -tAc 'select pg_catalog.quote_ident(datname) from pg_catal
 ) | psql -Xd "$2"
 
 # Optional: Supabase bootstrap (roles, schemas, event triggers, permissions)
-if [ "${ENABLE_SUPABASE_INIT:-}" = "true" ]; then
-    if [ "${ENABLE_SUPABASE_EXTENSIONS:-}" != "true" ]; then
+if [ "$SUPABASE_INIT_ENABLED" = "true" ]; then
+    if [ "$SUPABASE_EXTENSIONS_ENABLED" != "true" ]; then
         echo "ERROR: ENABLE_SUPABASE_INIT=true requires ENABLE_SUPABASE_EXTENSIONS=true" >&2
         exit 1
     fi
