@@ -65,6 +65,62 @@ download_and_verify_sha256() {
     printf '%s  %s\n' "$expected_sha" "$output" | sha256sum -c -
 }
 
+normalize_fingerprint() {
+    printf '%s' "$1" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]'
+}
+
+key_file_contains_fingerprint() {
+    local key_file="$1"
+    local expected
+    local actual
+
+    expected=$(normalize_fingerprint "$2")
+
+    while IFS= read -r actual; do
+        case "${#expected}" in
+            40)
+                [ "$actual" = "$expected" ] && return 0
+                ;;
+            *)
+                case "$actual" in
+                    *"$expected") return 0 ;;
+                esac
+                ;;
+        esac
+    done < <(gpg --show-keys --with-colons "$key_file" | awk -F: '/^fpr:/ {print toupper($10)}')
+
+    return 1
+}
+
+download_and_verify_openpgp_signature() {
+    local payload_url="$1"
+    local signature_url="$2"
+    local payload_path="$3"
+    local public_key_url="$4"
+    local expected_fingerprint="$5"
+    local key_file
+    local gpg_home
+
+    key_file=$(mktemp)
+    gpg_home=$(mktemp -d)
+
+    "$SYSTEM_CURL" -fsSL "$public_key_url" -o "$key_file"
+    if ! key_file_contains_fingerprint "$key_file" "$expected_fingerprint"; then
+        echo "ERROR: fingerprint mismatch for signing key from ${public_key_url}" >&2
+        rm -f "$key_file"
+        rm -rf "$gpg_home"
+        exit 1
+    fi
+
+    gpg --batch --homedir "$gpg_home" --import "$key_file"
+    "$SYSTEM_CURL" -fsSL "$payload_url" -o "$payload_path"
+    "$SYSTEM_CURL" -fsSL "$signature_url" -o "${payload_path}.asc"
+    gpg --batch --homedir "$gpg_home" --verify "${payload_path}.asc" "$payload_path"
+
+    rm -f "$key_file" "${payload_path}.asc"
+    rm -rf "$gpg_home"
+}
+
 install_modern_libcurl() {
     local curl_archive="curl-${CURL_VERSION}.tar.gz"
     local curl_source_dir="curl-${CURL_VERSION}"
@@ -85,12 +141,31 @@ install_modern_libcurl() {
     rm -rf "$curl_archive" "$curl_source_dir"
 }
 
+fetch_github_repo_at_commit() {
+    local repo="$1"
+    local commit="$2"
+    local dest_dir="$3"
+    local with_submodules="${4:-false}"
+
+    git init "$dest_dir"
+    git -C "$dest_dir" remote add origin "https://github.com/${repo}.git"
+    git -C "$dest_dir" fetch --depth 1 origin "$commit"
+    git -C "$dest_dir" checkout --detach FETCH_HEAD
+    [ "$(git -C "$dest_dir" rev-parse HEAD)" = "$commit" ]
+
+    if [ "$with_submodules" = "true" ]; then
+        git -C "$dest_dir" submodule update --init --recursive --depth 1
+    fi
+
+    find "$dest_dir" -name .git -prune -exec rm -rf {} +
+}
+
 extension_supports_version() {
     local ext_name="$1"
     local version="$2"
 
     case "$ext_name" in
-        pgmq|pg_stat_monitor)
+        pgmq)
             [ "$version" -ge 14 ] && [ "$version" -le 17 ]
             ;;
         *)
@@ -105,9 +180,6 @@ extension_support_note() {
     case "$ext_name" in
         pgmq)
             printf 'upstream v%s supports PostgreSQL 14-17' "$PGMQ_VERSION"
-            ;;
-        pg_stat_monitor)
-            printf 'upstream %s is only documented and tested through PostgreSQL 17' "$PG_STAT_MONITOR_VERSION"
             ;;
         *)
             printf 'unsupported on this PostgreSQL major'
@@ -154,12 +226,12 @@ else
     install_modern_libcurl
 
     # install pam_oauth2.so
-    git clone -b "$PAM_OAUTH2" --recurse-submodules https://github.com/zalando-pg/pam-oauth2.git
+    fetch_github_repo_at_commit "zalando-pg/pam-oauth2" "$PAM_OAUTH2_COMMIT" pam-oauth2 true
     make -C pam-oauth2 install
 
     # prepare 3rd sources
-    git clone -b "$PLPROFILER" https://github.com/bigsql/plprofiler.git
-    "$SYSTEM_CURL" -fsSL "https://github.com/zalando-pg/pg_mon/archive/$PG_MON_COMMIT.tar.gz" | tar xz
+    fetch_github_repo_at_commit "bigsql/plprofiler" "$PLPROFILER_COMMIT" plprofiler
+    fetch_github_repo_at_commit "zalando-pg/pg_mon" "$PG_MON_COMMIT" "pg_mon-${PG_MON_COMMIT}"
 
     for p in python3-keyring python3-docutils ieee-data; do
         version=$(apt-cache show $p | sed -n 's/^Version: //p' | sort -rV | head -n 1)
@@ -178,33 +250,28 @@ if [ "$WITH_PERL" != "true" ]; then
     equivs-build perl
 fi
 
-"$SYSTEM_CURL" -fsSL "https://github.com/CyberDem0n/bg_mon/archive/$BG_MON_COMMIT.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/zalando-pg/pg_auth_mon/archive/$PG_ACCESS_MON_COMMIT.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/zubkov-andrei/pg_profile/archive/$PG_PROFILE.tar.gz" | tar xz
+fetch_github_repo_at_commit "CyberDem0n/bg_mon" "$BG_MON_COMMIT" "bg_mon-${BG_MON_COMMIT}"
+fetch_github_repo_at_commit "zalando-pg/pg_auth_mon" "$PG_ACCESS_MON_COMMIT" "pg_auth_mon-${PG_ACCESS_MON_COMMIT}"
+fetch_github_repo_at_commit "zubkov-andrei/pg_profile" "$PG_PROFILE_COMMIT" "pg_profile-${PG_PROFILE}"
 
-# Download source-built Supabase and additional extension sources
-# GitHub does not publish an authoritative SHA256 for the pgsodium source archive,
-# so fetch the exact git object we expect and verify HEAD matches the pinned commit.
-git init "pgsodium-${PGSODIUM_COMMIT}"
-git -C "pgsodium-${PGSODIUM_COMMIT}" remote add origin https://github.com/michelp/pgsodium.git
-git -C "pgsodium-${PGSODIUM_COMMIT}" fetch --depth 1 origin "$PGSODIUM_COMMIT"
-git -C "pgsodium-${PGSODIUM_COMMIT}" checkout --detach FETCH_HEAD
-[ "$(git -C "pgsodium-${PGSODIUM_COMMIT}" rev-parse HEAD)" = "$PGSODIUM_COMMIT" ]
-rm -rf "pgsodium-${PGSODIUM_COMMIT}/.git"
-"$SYSTEM_CURL" -fsSL "https://github.com/supabase/vault/archive/v$VAULT_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/supabase/pg_net/archive/v$PG_NET_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/supabase/supautils/archive/v$SUPAUTILS_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/pramsey/pgsql-http/archive/v$HTTP_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/eradman/pg-safeupdate/archive/$PG_SAFEUPDATE_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/iCyberon/pg_hashids/archive/$PG_HASHIDS_COMMIT.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/pgexperts/pg_plan_filter/archive/$PG_PLAN_FILTER_COMMIT.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/percona/pg_stat_monitor/archive/$PG_STAT_MONITOR_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/aws/pg_tle/archive/v$PG_TLE_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/postgrespro/rum/archive/$RUM_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/michelp/pgjwt/archive/$PGJWT_COMMIT.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/tembo-io/pgmq/archive/v$PGMQ_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/supabase/index_advisor/archive/v$INDEX_ADVISOR_VERSION.tar.gz" | tar xz
-"$SYSTEM_CURL" -fsSL "https://github.com/theory/pgtap/archive/v$PGTAP_VERSION.tar.gz" | tar xz
+# Download source-built Supabase and additional extension sources.
+# GitHub does not publish authoritative SHA256 digests for most source archives,
+# so fetch the exact git objects we expect and verify HEAD matches the pinned commits.
+fetch_github_repo_at_commit "michelp/pgsodium" "$PGSODIUM_COMMIT" "pgsodium-${PGSODIUM_COMMIT}"
+fetch_github_repo_at_commit "supabase/vault" "$VAULT_COMMIT" "vault-${VAULT_VERSION}"
+fetch_github_repo_at_commit "supabase/pg_net" "$PG_NET_COMMIT" "pg_net-${PG_NET_VERSION}"
+fetch_github_repo_at_commit "supabase/supautils" "$SUPAUTILS_COMMIT" "supautils-${SUPAUTILS_VERSION}"
+fetch_github_repo_at_commit "pramsey/pgsql-http" "$HTTP_COMMIT" "pgsql-http-${HTTP_VERSION}"
+fetch_github_repo_at_commit "eradman/pg-safeupdate" "$PG_SAFEUPDATE_COMMIT" "pg-safeupdate-${PG_SAFEUPDATE_VERSION}"
+fetch_github_repo_at_commit "iCyberon/pg_hashids" "$PG_HASHIDS_COMMIT" "pg_hashids-${PG_HASHIDS_COMMIT}"
+fetch_github_repo_at_commit "pgexperts/pg_plan_filter" "$PG_PLAN_FILTER_COMMIT" "pg_plan_filter-${PG_PLAN_FILTER_COMMIT}"
+fetch_github_repo_at_commit "percona/pg_stat_monitor" "$PG_STAT_MONITOR_COMMIT" "pg_stat_monitor-${PG_STAT_MONITOR_VERSION}"
+fetch_github_repo_at_commit "aws/pg_tle" "$PG_TLE_COMMIT" "pg_tle-${PG_TLE_VERSION}"
+fetch_github_repo_at_commit "postgrespro/rum" "$RUM_COMMIT" "rum-${RUM_VERSION}"
+fetch_github_repo_at_commit "michelp/pgjwt" "$PGJWT_COMMIT" "pgjwt-${PGJWT_COMMIT}"
+fetch_github_repo_at_commit "tembo-io/pgmq" "$PGMQ_COMMIT" "pgmq-${PGMQ_VERSION}"
+fetch_github_repo_at_commit "supabase/index_advisor" "$INDEX_ADVISOR_COMMIT" "index_advisor-${INDEX_ADVISOR_VERSION}"
+fetch_github_repo_at_commit "theory/pgtap" "$PGTAP_COMMIT" "pgtap-${PGTAP_VERSION}"
 
 # Add Groonga apt repository for pgroonga
 if [ "$DEMO" != "true" ]; then
@@ -214,7 +281,12 @@ if [ "$DEMO" != "true" ]; then
         exit 1
     fi
     groonga_source_pkg="groonga-apt-source-latest-${distro_codename}.deb"
-    "$SYSTEM_CURL" -fsSL "https://packages.groonga.org/ubuntu/${groonga_source_pkg}" -o "$groonga_source_pkg"
+    download_and_verify_openpgp_signature \
+        "https://packages.groonga.org/ubuntu/${groonga_source_pkg}" \
+        "https://packages.groonga.org/ubuntu/${groonga_source_pkg}.asc.C97E4649A2051D0CEA1A73F972A7496B45499429" \
+        "$groonga_source_pkg" \
+        "https://packages.groonga.org/ubuntu/groonga-archive-keyring.asc" \
+        "C97E4649A2051D0CEA1A73F972A7496B45499429"
     dpkg -i "$groonga_source_pkg"
     rm -f "$groonga_source_pkg"
     apt-get update

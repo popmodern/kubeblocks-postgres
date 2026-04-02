@@ -55,8 +55,12 @@ def adjust_extensions(old, version, extwlist=False):
     for name in old.split(','):
         name = name.strip()
         value = extensions.get(name)
-        if name not in ret and (value is None or (value[0] <= version <= value[1] and extension_is_installed(name, version)
-                                                  and (not extwlist or value[3]))):
+        is_supported = value is None or (
+            value[0] <= version <= value[1]
+            and extension_is_installed(name, version)
+            and (not extwlist or value[3])
+        )
+        if name not in ret and is_supported:
             ret.append(name)
     return ','.join(ret)
 
@@ -67,8 +71,12 @@ def append_extensions(old, version, extwlist=False):
 
     def maybe_append(name):
         value = extensions.get(name)
-        if name not in ret and (value is None or (value[0] <= version <= value[1] and extension_is_installed(name, version)
-                                                  and value[extwlist])):
+        is_supported = value is None or (
+            value[0] <= version <= value[1]
+            and extension_is_installed(name, version)
+            and value[extwlist]
+        )
+        if name not in ret and is_supported:
             ret.append(name)
 
     for name in old.split(','):
