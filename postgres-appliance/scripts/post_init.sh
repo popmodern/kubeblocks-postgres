@@ -332,6 +332,7 @@ if [ "${ENABLE_SUPABASE_INIT:-}" = "true" ]; then
         echo "Running legacy Supabase bootstrap SQL for PostgreSQL ${PGVER}..."
         while read -r db_name; do
             psql -Xd "$db_name" -f /scripts/supabase_init.sql
+            /scripts/run_supabase_migrations.sh --custom-only "$db_name"
         done < <(psql -d "$2" -tAc "SELECT pg_catalog.quote_ident(datname) FROM pg_catalog.pg_database WHERE datallowconn AND datname NOT IN ('template0','template1')")
     else
         echo "Running Supabase migration bundle on postgres..."

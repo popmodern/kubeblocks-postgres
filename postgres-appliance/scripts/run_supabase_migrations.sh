@@ -2,10 +2,22 @@
 
 set -euo pipefail
 
+MODE=full
+if [ "${1:-}" = "--custom-only" ]; then
+    MODE=custom-only
+    shift
+fi
+
 TARGET_DB=${1:-postgres}
 SUPABASE_ROOT=/usr/share/supabase/postgres
 INIT_SCRIPTS_DIR=${SUPABASE_ROOT}/migrations/db/init-scripts
 MIGRATIONS_DIR=${SUPABASE_ROOT}/migrations/db/migrations
+CUSTOM_MIGRATIONS_DIR=${SUPABASE_CUSTOM_MIGRATIONS_DIR:-/etc/postgresql.schema.d}
+CUSTOM_MIGRATION_FILE=${SUPABASE_CUSTOM_MIGRATION_FILE:-/etc/postgresql.schema.sql}
+
+sql_literal() {
+    printf "%s" "$1" | sed "s/'/''/g"
+}
 
 require_sql_dir() {
     local dir_path=$1
@@ -20,6 +32,16 @@ sql_files() {
     local dir_path=$1
 
     find "$dir_path" -maxdepth 1 -type f -name '*.sql' | LC_ALL=C sort
+}
+
+optional_sql_files() {
+    local dir_path=$1
+
+    if [ ! -d "$dir_path" ]; then
+        return 0
+    fi
+
+    sql_files "$dir_path"
 }
 
 latest_sql_version() {
@@ -54,6 +76,16 @@ ensure_schema_migrations_table() {
     psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<'SQL'
 CREATE TABLE IF NOT EXISTS public.schema_migrations (
     version character varying(255) PRIMARY KEY
+);
+SQL
+}
+
+ensure_custom_migrations_table() {
+    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<'SQL'
+CREATE TABLE IF NOT EXISTS public.spilo_supabase_custom_migrations (
+    identifier text PRIMARY KEY,
+    checksum text NOT NULL,
+    applied_at timestamp with time zone NOT NULL DEFAULT now()
 );
 SQL
 }
@@ -148,6 +180,63 @@ run_sql_dir_as_role() {
     done < <(sql_files "$dir_path")
 }
 
+file_checksum() {
+    local sql_file=$1
+
+    sha256sum "$sql_file" | awk '{print $1}'
+}
+
+run_custom_sql_file() {
+    local identifier=$1
+    local sql_file=$2
+    local checksum
+    local escaped_identifier
+    local escaped_checksum
+    local already_applied
+
+    checksum=$(file_checksum "$sql_file")
+    escaped_identifier=$(sql_literal "$identifier")
+    escaped_checksum=$(sql_literal "$checksum")
+    already_applied=$(psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" -tAc "SELECT EXISTS (SELECT 1 FROM public.spilo_supabase_custom_migrations WHERE identifier = '${escaped_identifier}' AND checksum = '${escaped_checksum}')")
+    if [ "$already_applied" = "t" ]; then
+        return 1
+    fi
+
+    echo "Running Supabase custom SQL ${identifier} on ${TARGET_DB}"
+    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<SQL
+BEGIN;
+SET LOCAL ROLE supabase_admin;
+\i ${sql_file}
+INSERT INTO public.spilo_supabase_custom_migrations(identifier, checksum)
+VALUES ('${escaped_identifier}', '${escaped_checksum}')
+ON CONFLICT (identifier) DO UPDATE
+SET checksum = EXCLUDED.checksum,
+    applied_at = now();
+COMMIT;
+SQL
+}
+
+apply_custom_sql_hooks() {
+    local applied_any=false
+    local sql_file
+    local identifier
+
+    while IFS= read -r sql_file; do
+        identifier="dir:$(basename "$sql_file")"
+        if run_custom_sql_file "$identifier" "$sql_file"; then
+            applied_any=true
+        fi
+    done < <(optional_sql_files "$CUSTOM_MIGRATIONS_DIR")
+
+    if [ -f "$CUSTOM_MIGRATION_FILE" ]; then
+        if run_custom_sql_file "file:${CUSTOM_MIGRATION_FILE}" "$CUSTOM_MIGRATION_FILE"; then
+            applied_any=true
+        fi
+    fi
+
+    [ "$applied_any" = true ]
+}
+
 reset_stats() {
     psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<'SQL' || true
 SET ROLE supabase_admin;
@@ -162,27 +251,55 @@ if [ "$TARGET_DB" != "postgres" ]; then
     exit 1
 fi
 
-require_sql_dir "$INIT_SCRIPTS_DIR"
-require_sql_dir "$MIGRATIONS_DIR"
-
 PGVER=$(psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" -tAc "SELECT current_setting('server_version_num')::int / 10000")
-if [ "$PGVER" -lt 15 ]; then
+if [ "$MODE" != "custom-only" ] && [ "$PGVER" -lt 15 ]; then
     echo "ERROR: Supabase upstream migrations require PostgreSQL 15 or newer" >&2
     exit 1
 fi
 
-LATEST_MIGRATION_VERSION=$(latest_sql_version "$MIGRATIONS_DIR")
-if [ "$(is_migration_complete "$LATEST_MIGRATION_VERSION")" = "t" ]; then
-    echo "Supabase migration bundle already applied to ${TARGET_DB}"
-    exit 0
+ensure_custom_migrations_table
+
+bundle_applied=false
+if [ "$MODE" != "custom-only" ]; then
+    require_sql_dir "$INIT_SCRIPTS_DIR"
+    require_sql_dir "$MIGRATIONS_DIR"
+
+    bootstrap_supabase_admin
+    ensure_schema_migrations_table
+
+    LATEST_MIGRATION_VERSION=$(latest_sql_version "$MIGRATIONS_DIR")
+    if [ "$(is_migration_complete "$LATEST_MIGRATION_VERSION")" = "t" ]; then
+        echo "Supabase migration bundle already applied to ${TARGET_DB}"
+    else
+        ensure_pgbouncer_auth_schema
+        ensure_stat_extension_schema
+        run_sql_dir_as_role postgres "$INIT_SCRIPTS_DIR"
+        run_sql_dir_as_role supabase_admin "$MIGRATIONS_DIR"
+        bundle_applied=true
+    fi
 fi
 
-bootstrap_supabase_admin
-ensure_schema_migrations_table
-ensure_pgbouncer_auth_schema
-ensure_stat_extension_schema
-run_sql_dir_as_role postgres "$INIT_SCRIPTS_DIR"
-run_sql_dir_as_role supabase_admin "$MIGRATIONS_DIR"
-reset_stats
+custom_applied=false
+if apply_custom_sql_hooks; then
+    custom_applied=true
+fi
 
-echo "Supabase migration bundle applied successfully to ${TARGET_DB}"
+if [ "$bundle_applied" = true ] || [ "$custom_applied" = true ]; then
+    reset_stats
+fi
+
+if [ "$MODE" = "custom-only" ]; then
+    if [ "$custom_applied" = true ]; then
+        echo "Supabase custom SQL applied successfully to ${TARGET_DB}"
+    else
+        echo "No new Supabase custom SQL to apply to ${TARGET_DB}"
+    fi
+elif [ "$bundle_applied" = true ] && [ "$custom_applied" = true ]; then
+    echo "Supabase migration bundle and custom SQL applied successfully to ${TARGET_DB}"
+elif [ "$bundle_applied" = true ]; then
+    echo "Supabase migration bundle applied successfully to ${TARGET_DB}"
+elif [ "$custom_applied" = true ]; then
+    echo "Supabase custom SQL applied successfully to ${TARGET_DB}"
+else
+    echo "No new Supabase migrations to apply to ${TARGET_DB}"
+fi
