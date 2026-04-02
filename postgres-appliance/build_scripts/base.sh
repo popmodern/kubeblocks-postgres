@@ -8,6 +8,7 @@ export DEBIAN_FRONTEND=noninteractive
 MAKEFLAGS="-j $(grep -c ^processor /proc/cpuinfo)"
 export MAKEFLAGS
 SYSTEM_CURL=/usr/bin/curl
+MODERN_LIBCURL_PREFIX=/opt/libcurl-modern
 
 set -ex
 sed -i 's/^#\s*\(deb.*universe\)$/\1/g' /etc/apt/sources.list
@@ -132,12 +133,11 @@ install_modern_libcurl() {
     tar xzf "$curl_archive"
     (
         cd "$curl_source_dir"
-        ./configure --prefix=/usr/local --with-openssl --disable-static --enable-shared
+        ./configure --prefix="$MODERN_LIBCURL_PREFIX" --with-openssl --disable-static --enable-shared
         make
         make install
     )
-    rm -f /usr/local/bin/curl /usr/local/bin/curl-config
-    ldconfig
+    rm -f "$MODERN_LIBCURL_PREFIX/bin/curl" "$MODERN_LIBCURL_PREFIX/bin/curl-config"
     rm -rf "$curl_archive" "$curl_source_dir"
 }
 
@@ -202,8 +202,8 @@ build_pgxs_extension() {
 
     if [ "$ext_name" = "pg_net" ] || [ "$ext_name" = "http" ]; then
         pg_cppflags=$(PATH="/usr/lib/postgresql/$version/bin:$PATH" pg_config --cppflags)
-        make_args+=("CPPFLAGS=${pg_cppflags} -I/usr/local/include")
-        make_args+=("SHLIB_LINK=-L/usr/local/lib -Wl,-rpath,/usr/local/lib -lcurl")
+        make_args+=("CPPFLAGS=${pg_cppflags} -I${MODERN_LIBCURL_PREFIX}/include")
+        make_args+=("SHLIB_LINK=-L${MODERN_LIBCURL_PREFIX}/lib -Wl,-rpath,${MODERN_LIBCURL_PREFIX}/lib -lcurl")
     fi
 
     PATH="/usr/lib/postgresql/$version/bin:$PATH" make -C "$source_dir" USE_PGXS=1 "${make_args[@]}" clean

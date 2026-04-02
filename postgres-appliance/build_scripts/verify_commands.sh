@@ -2,6 +2,8 @@
 
 set -eu
 
+MODERN_LIBCURL_PREFIX=/opt/libcurl-modern
+
 require_command() {
     if ! command -v "$1" > /dev/null 2>&1; then
         echo "ERROR: required command '$1' is not available in the image" >&2
@@ -23,19 +25,19 @@ require_file() {
     fi
 }
 
-require_libcurl_from_usr_local() {
+require_extension_private_libcurl() {
     extension_lib="$1"
 
-    if ! ldd "$extension_lib" | grep -Eq 'libcurl\.so\.4 => /usr/local/lib/'; then
-        echo "ERROR: $extension_lib does not resolve libcurl.so.4 from /usr/local/lib" >&2
+    if ! ldd "$extension_lib" | grep -Eq "libcurl\\.so\\.4 => ${MODERN_LIBCURL_PREFIX}/lib/"; then
+        echo "ERROR: $extension_lib does not resolve libcurl.so.4 from ${MODERN_LIBCURL_PREFIX}/lib" >&2
         ldd "$extension_lib" >&2
         exit 1
     fi
 }
 
 require_system_curl_libcurl() {
-    if ldd /usr/bin/curl | grep -Eq 'libcurl\.so\.4 => /usr/local/lib/'; then
-        echo "ERROR: /usr/bin/curl resolves libcurl.so.4 from /usr/local/lib" >&2
+    if ldd /usr/bin/curl | grep -Eq "libcurl\\.so\\.4 => ${MODERN_LIBCURL_PREFIX}/lib/"; then
+        echo "ERROR: /usr/bin/curl resolves libcurl.so.4 from ${MODERN_LIBCURL_PREFIX}/lib" >&2
         ldd /usr/bin/curl >&2
         exit 1
     fi
@@ -51,13 +53,13 @@ require_executable /usr/sbin/pgbouncer
 require_executable /usr/bin/pgqd
 require_executable /usr/local/bin/wal-g
 require_file /usr/local/lib/cron_unprivileged.so
-require_file /usr/local/lib/libcurl.so.4
+require_file "${MODERN_LIBCURL_PREFIX}/lib/libcurl.so.4"
 require_system_curl_libcurl
 
 find /usr/lib/postgresql \( -path '*/lib/pg_net.so' -o -path '*/lib/http.so' \) -print |
 while IFS= read -r extension_lib; do
     require_file "$extension_lib"
-    require_libcurl_from_usr_local "$extension_lib"
+    require_extension_private_libcurl "$extension_lib"
 done
 
 if [ "${DEMO:-false}" != "true" ]; then
