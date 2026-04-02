@@ -19,7 +19,7 @@ function cleanup() {
     containers=()
     while IFS= read -r container_id; do
         containers+=("$container_id")
-    done < <(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
+    done < <(docker ps -aq --filter="name=${PREFIX}")
     if (( ${#containers[@]} > 0 )); then
         docker rm -f "${containers[@]}"
     fi
@@ -168,10 +168,26 @@ function test_successful_inplace_upgrade_to_17() {
     docker_exec "$1" "PGVERSION=17 $UPGRADE_SCRIPT 3"
 }
 
+function start_detached_test_container() {
+    local error_message=$1
+    shift
+    local container_name
+
+    if ! container_name=$(docker-compose run "$@"); then
+        log_error "$error_message"
+    fi
+
+    if [[ -z "$container_name" ]]; then
+        log_error "$error_message"
+    fi
+
+    printf '%s\n' "$container_name"
+}
+
 function start_clone_with_walg_upgrade_container() {
     local ID=${1:-1}
 
-    docker-compose run \
+    start_detached_test_container "Failed to start WAL-G clone upgrade container ${PREFIX}upgrade${ID}" \
         -e SCOPE=upgrade \
         -e PGVERSION=15 \
         -e CLONE_SCOPE=demo \
@@ -187,7 +203,7 @@ function start_clone_with_walg_upgrade_replica_container() {
 }
 
 function start_clone_with_walg_upgrade_to_17_container() {
-    docker-compose run \
+    start_detached_test_container "Failed to start WAL-G clone upgrade container ${PREFIX}upgrade4" \
         -e SCOPE=upgrade3 \
         -e PGVERSION=17 \
         -e CLONE_SCOPE=demo \
@@ -199,7 +215,7 @@ function start_clone_with_walg_upgrade_to_17_container() {
 }
 
 function start_clone_with_walg_17_container() {
-    docker-compose run \
+    start_detached_test_container "Failed to start PITR clone container ${PREFIX}clone17" \
         -e SCOPE=clone17 \
         -e PGVERSION=17 \
         -e CLONE_SCOPE=upgrade3 \
@@ -212,7 +228,7 @@ function start_clone_with_walg_17_container() {
 
 function start_clone_with_basebackup_upgrade_container() {
     local container=$1
-    docker-compose run \
+    start_detached_test_container "Failed to start basebackup clone container ${PREFIX}upgrade3" \
         -e SCOPE=upgrade2 \
         -e PGVERSION=16 \
         -e CLONE_SCOPE=upgrade \
@@ -226,7 +242,7 @@ function start_clone_with_basebackup_upgrade_container() {
 }
 
 function start_clone_with_hourly_log_rotation() {
-    docker-compose run \
+    start_detached_test_container "Failed to start hourly log rotation container ${PREFIX}hourlylogs" \
         -e SCOPE=hourlylogs \
         -e PGVERSION=17 \
         -e LOG_SHIP_HOURLY="true" \
