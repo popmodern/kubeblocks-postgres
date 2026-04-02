@@ -70,3 +70,25 @@ services:
         <<: *spilo
         hostname: spilo3
         container_name: demo-spilo3
+
+    supabase:
+        image: ${SPILO_TEST_IMAGE:-spilo}
+        networks: [ demo ]
+        depends_on: [ minio ]
+        environment:
+            SPILO_PROVIDER: 'local'
+            AWS_ACCESS_KEY_ID: *access_key
+            AWS_SECRET_ACCESS_KEY: *secret_key
+            AWS_ENDPOINT: *aws_endpoint
+            AWS_S3_FORCE_PATH_STYLE: *aws_s3_force_path_style
+            WAL_S3_BUCKET: *bucket
+            WALG_DISABLE_S3_SSE: *walg_disable_s3_sse
+            ETCDCTL_ENDPOINTS: http://etcd:2379
+            ETCD3_HOST: "etcd:2379"
+            SCOPE: supabase
+            ENABLE_SUPABASE_EXTENSIONS: 'true'
+            ENABLE_SUPABASE_INIT: 'true'
+            PGSODIUM_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+            PGVERSION: '17'
+        hostname: supabase
+        container_name: demo-supabase

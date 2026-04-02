@@ -328,8 +328,13 @@ if [ "${ENABLE_SUPABASE_INIT:-}" = "true" ]; then
         echo "ERROR: ENABLE_SUPABASE_INIT=true requires ENABLE_SUPABASE_EXTENSIONS=true" >&2
         exit 1
     fi
-    echo "Running Supabase bootstrap SQL..."
-    while read -r db_name; do
-        psql -Xd "$db_name" -f /scripts/supabase_init.sql
-    done < <(psql -d "$2" -tAc "SELECT pg_catalog.quote_ident(datname) FROM pg_catalog.pg_database WHERE datallowconn AND datname NOT IN ('template0','template1')")
+    if [ "$PGVER" -lt 15 ]; then
+        echo "Running legacy Supabase bootstrap SQL for PostgreSQL ${PGVER}..."
+        while read -r db_name; do
+            psql -Xd "$db_name" -f /scripts/supabase_init.sql
+        done < <(psql -d "$2" -tAc "SELECT pg_catalog.quote_ident(datname) FROM pg_catalog.pg_database WHERE datallowconn AND datname NOT IN ('template0','template1')")
+    else
+        echo "Running Supabase migration bundle on postgres..."
+        /scripts/run_supabase_migrations.sh postgres
+    fi
 fi

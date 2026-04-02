@@ -91,6 +91,7 @@ ENV POSTGIS_VERSION=3.6 \
     INDEX_ADVISOR_COMMIT=d37723555e6425f18e6a45cb0956ced2250a3fe7 \
     PGTAP_VERSION=1.3.4 \
     PGTAP_COMMIT=968eb53a33114e83042b3bdb0c664b5b80cf8bdf \
+    SUPABASE_POSTGRES_COMMIT=2997c92770dd85e6450e3e2c7d2c843f4717f492 \
     PG_GRAPHQL_VERSION=1.5.12 \
     PG_JSONSCHEMA_VERSION=0.3.4 \
     WRAPPERS_VERSION=0.6.0
@@ -124,6 +125,8 @@ LABEL maintainer="Team ACID @ Zalando <team-acid@zalando.de>"
 ARG PGVERSION
 ARG DEMO
 ARG COMPRESS
+ARG ENABLE_SUPABASE_EXTENSIONS_DEFAULT=false
+ARG ENABLE_SUPABASE_INIT_DEFAULT=false
 
 EXPOSE 5432 8008 8080
 
@@ -140,7 +143,9 @@ ENV WALG_ENV_DIR=$RW_DIR/etc/wal-e.d/env \
 ENV PGDATA=$PGROOT/data \
     PGLOG=$PGROOT/pg_log
 
-ENV USE_OLD_LOCALES=false
+ENV USE_OLD_LOCALES=false \
+    ENABLE_SUPABASE_EXTENSIONS=$ENABLE_SUPABASE_EXTENSIONS_DEFAULT \
+    ENABLE_SUPABASE_INIT=$ENABLE_SUPABASE_INIT_DEFAULT
 
 WORKDIR $PGHOME
 
@@ -152,7 +157,7 @@ COPY build_scripts/post_build.sh build_scripts/verify_commands.sh /builddeps/
 RUN sh /builddeps/post_build.sh
 
 COPY scripts bootstrap major_upgrade /scripts/
-RUN chmod +x /scripts/pgsodium_getkey.sh && sh /builddeps/verify_commands.sh && rm -rf /builddeps/
+RUN chmod +x /scripts/pgsodium_getkey.sh /scripts/run_supabase_migrations.sh && sh /builddeps/verify_commands.sh && rm -rf /builddeps/
 COPY launch.sh /
 
 CMD ["/bin/sh", "/launch.sh", "init"]

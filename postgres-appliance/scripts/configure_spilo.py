@@ -1172,6 +1172,10 @@ def main():
             'pgsodium.getkey_script' not in user_config.get('postgresql', {}).get('parameters', {}):
         config['postgresql']['parameters']['pgsodium.getkey_script'] = '/scripts/pgsodium_getkey.sh'
 
+    if os.environ.get('ENABLE_SUPABASE_INIT') == 'true' and \
+            'wal_level' not in user_config.get('postgresql', {}).get('parameters', {}):
+        config['postgresql']['parameters']['wal_level'] = 'logical'
+
     # Ensure replication is available
     if 'pg_hba' in config['bootstrap'] and not any(['replication' in i for i in config['bootstrap']['pg_hba']]):
         rep_hba = 'hostssl replication {} all md5'.\

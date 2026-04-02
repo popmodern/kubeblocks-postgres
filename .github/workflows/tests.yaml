@@ -35,6 +35,12 @@ jobs:
       run: find postgres-appliance -name '*.py' -print0 | xargs -0 python -m flake8
     - name: Build spilo docker image
       run: cd postgres-appliance && docker build -t spilo .
+    - name: Build Supabase-default docker image
+      run: cd postgres-appliance && docker build --build-arg ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true -t spilo-supabase .
+    - name: Smoke test Supabase-default docker image metadata
+      run: |
+        docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' spilo-supabase | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'
+        docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' spilo-supabase | grep '^ENABLE_SUPABASE_INIT=false$'
     - name: Test spilo docker image
       run: bash postgres-appliance/tests/test_spilo.sh
     - name: Test USE_OLD_LOCALES

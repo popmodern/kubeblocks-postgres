@@ -252,6 +252,64 @@ function verify_hourly_log_rotation() {
     [ "$log_rotation_age" = "1h" ] && [ "$log_filename" = "postgresql-%u-%H.log" ] && [ "$postgres_log_ftables" -eq 192 ] && [ "$postgres_log_views" -eq 8 ] && [ "$postgres_failed_auth_views" -eq 200 ]
 }
 
+function verify_supabase_wal_level() {
+    local wal_level
+    wal_level=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW wal_level\"")
+    [ "$wal_level" = "logical" ]
+}
+
+function verify_supabase_roles() {
+    local count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_roles WHERE rolname IN ('anon','authenticated','authenticator','dashboard_user','pgbouncer','service_role','supabase_admin','supabase_auth_admin','supabase_etl_admin','supabase_read_only_user','supabase_replication_admin','supabase_storage_admin')\"")
+    [ "$count" = "12" ]
+}
+
+function verify_supabase_schemas() {
+    local count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('auth','extensions','graphql','graphql_public','pgbouncer','realtime','storage','vault')\"")
+    [ "$count" = "8" ]
+}
+
+function verify_supabase_extensions() {
+    local count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE (e.extname = 'pg_stat_statements' AND n.nspname = 'extensions') OR (e.extname = 'pg_graphql' AND n.nspname = 'graphql') OR (e.extname = 'pgcrypto' AND n.nspname = 'extensions') OR (e.extname = 'supabase_vault' AND n.nspname = 'vault') OR (e.extname = 'uuid-ossp' AND n.nspname = 'extensions')\"")
+    [ "$count" = "5" ]
+}
+
+function verify_supabase_pgbouncer_auth() {
+    local count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'pgbouncer' AND p.proname = 'get_auth'\"")
+    [ "$count" = "1" ]
+}
+
+function verify_supabase_migration_marker() {
+    local applied
+    applied=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '20260211120934_supabase_privileged_role')\"")
+    [ "$applied" = "t" ]
+}
+
+function verify_supabase_publication() {
+    local count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_publication WHERE pubname = 'supabase_realtime'\"")
+    [ "$count" = "1" ]
+}
+
+function test_supabase_bootstrap() {
+    local container=$1
+
+    log_info "[TS8] Waiting for Supabase bootstrap on $container..."
+    find_leader "$container" 1
+    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1"
+
+    run_test verify_supabase_wal_level "$container"
+    run_test verify_supabase_roles "$container"
+    run_test verify_supabase_schemas "$container"
+    run_test verify_supabase_extensions "$container"
+    run_test verify_supabase_pgbouncer_auth "$container"
+    run_test verify_supabase_migration_marker "$container"
+    run_test verify_supabase_publication "$container"
+}
+
 # TEST SUITE 1 - In-place major upgrade 14->15->16->17
 # TEST SUITE 2 - Major upgrade 14->17 after wal-g clone (with CLONE_PGVERSION set)
 # TEST SUITE 3 - PITR (clone with wal-g) with unreachable target (15+)
@@ -386,6 +444,8 @@ function main() {
     local leader
     leader="$PREFIX$(find_leader "${PREFIX}spilo1")"
     test_spilo "$leader"
+
+    test_supabase_bootstrap "${PREFIX}supabase"
 }
 
 trap cleanup QUIT TERM EXIT

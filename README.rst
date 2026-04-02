@@ -23,6 +23,8 @@ Spilo's setup assumes that you've correctly configured a load balancer (HAProxy,
 
 Spilo images are made available in the GitHub container registry (ghcr.io). Images are build and published as linux/amd64 and linux/arm64 on tag. For PostgreSQL version 14 currently availble images can be found here: https://github.com/zalando/spilo/pkgs/container/spilo-14
 
+The publish workflow also emits a ``-supabase`` tag variant for each published tag. This variant keeps the same image contents but defaults ``ENABLE_SUPABASE_EXTENSIONS=true`` in the image metadata, while leaving ``ENABLE_SUPABASE_INIT=false`` so database bootstrap remains an explicit opt-in.
+
 
 How to Build This Docker Image
 ==============================

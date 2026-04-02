@@ -272,6 +272,10 @@ fetch_github_repo_at_commit "michelp/pgjwt" "$PGJWT_COMMIT" "pgjwt-${PGJWT_COMMI
 fetch_github_repo_at_commit "tembo-io/pgmq" "$PGMQ_COMMIT" "pgmq-${PGMQ_VERSION}"
 fetch_github_repo_at_commit "supabase/index_advisor" "$INDEX_ADVISOR_COMMIT" "index_advisor-${INDEX_ADVISOR_VERSION}"
 fetch_github_repo_at_commit "theory/pgtap" "$PGTAP_COMMIT" "pgtap-${PGTAP_VERSION}"
+fetch_github_repo_at_commit "supabase/postgres" "$SUPABASE_POSTGRES_COMMIT" "supabase-postgres-${SUPABASE_POSTGRES_COMMIT}"
+
+install -d /usr/share/supabase/postgres/migrations
+cp -r "supabase-postgres-${SUPABASE_POSTGRES_COMMIT}/migrations/db" /usr/share/supabase/postgres/migrations/
 
 # Add Groonga apt repository for pgroonga
 if [ "$DEMO" != "true" ]; then

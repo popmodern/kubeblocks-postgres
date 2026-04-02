@@ -26,6 +26,7 @@ pipeline:
 
       PATRONIVERSION=$(sed -n 's/^ENV PATRONIVERSION=\([1-9][0-9]*\.[0-9]*\).*$/\1/p' Dockerfile)
       ECR_TEST_IMAGE="$MULTI_ARCH_REGISTRY/spilo-cdp-pr$CDP_PULL_REQUEST_NUMBER-$PGVERSION:$PATRONIVERSION-p$CDP_PULL_REQUEST_COUNTER"
+      ECR_SUPABASE_IMAGE="$MULTI_ARCH_REGISTRY/spilo-cdp-pr$CDP_PULL_REQUEST_NUMBER-$PGVERSION:$PATRONIVERSION-p$CDP_PULL_REQUEST_COUNTER-supabase"
 
       # create a Buildkit builder with CDP specific configuration
       docker buildx create --config /etc/cdp-buildkitd.toml --driver-opt network=host --bootstrap --use
@@ -36,6 +37,14 @@ pipeline:
                           --build-arg PGOLDVERSIONS="$PGOLDVERSIONS" \
                           -t "$ECR_TEST_IMAGE" \
                           --push .
+
+                    docker buildx build --platform "linux/amd64,linux/arm64" \
+                            --build-arg PGVERSION="$PGVERSION" \
+                            --build-arg BASE_IMAGE="$BASE_IMAGE" \
+                            --build-arg PGOLDVERSIONS="$PGOLDVERSIONS" \
+                            --build-arg ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true \
+                            -t "$ECR_SUPABASE_IMAGE" \
+                            --push .
 
 - id: push-spilo-cdp
   env:
@@ -55,6 +64,7 @@ pipeline:
 
       PATRONIVERSION=$(sed -n 's/^ENV PATRONIVERSION=\([1-9][0-9]*\.[0-9]*\).*$/\1/p' Dockerfile)
       ECR_TEST_IMAGE="$MULTI_ARCH_REGISTRY/spilo-cdp-$PGVERSION:trigger-$PATRONIVERSION-p$CDP_TARGET_BRANCH_COUNTER"
+      ECR_SUPABASE_IMAGE="$MULTI_ARCH_REGISTRY/spilo-cdp-$PGVERSION:trigger-$PATRONIVERSION-p$CDP_TARGET_BRANCH_COUNTER-supabase"
 
       # create a Buildkit builder with CDP specific configuration
       docker buildx create --config /etc/cdp-buildkitd.toml --driver-opt network=host --bootstrap --use
@@ -66,6 +76,15 @@ pipeline:
                           -t "$ECR_TEST_IMAGE" \
                           --push .
       cdp-promote-image "$ECR_TEST_IMAGE"
+
+                    docker buildx build --platform "linux/amd64,linux/arm64" \
+                            --build-arg PGVERSION="$PGVERSION" \
+                            --build-arg BASE_IMAGE="$BASE_IMAGE" \
+                            --build-arg PGOLDVERSIONS="$PGOLDVERSIONS" \
+                            --build-arg ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true \
+                            -t "$ECR_SUPABASE_IMAGE" \
+                            --push .
+                    cdp-promote-image "$ECR_SUPABASE_IMAGE"
 
 - id: push-spilo-cdp-master
   env:
@@ -86,6 +105,7 @@ pipeline:
 
       PATRONIVERSION=$(sed -n 's/^ENV PATRONIVERSION=\([1-9][0-9]*\.[0-9]*\).*$/\1/p' Dockerfile)
       ECR_TEST_IMAGE="$MULTI_ARCH_REGISTRY/spilo-cdp-$PGVERSION:$PATRONIVERSION-p$CDP_TARGET_BRANCH_COUNTER"
+      ECR_SUPABASE_IMAGE="$MULTI_ARCH_REGISTRY/spilo-cdp-$PGVERSION:$PATRONIVERSION-p$CDP_TARGET_BRANCH_COUNTER-supabase"
 
       # create a Buildkit builder with CDP specific configuration
       docker buildx create --config /etc/cdp-buildkitd.toml --driver-opt network=host --bootstrap --use
@@ -97,6 +117,15 @@ pipeline:
                           -t "$ECR_TEST_IMAGE" \
                           --push .
       cdp-promote-image "$ECR_TEST_IMAGE"
+
+                    docker buildx build --platform "linux/amd64,linux/arm64" \
+                            --build-arg PGVERSION="$PGVERSION" \
+                            --build-arg BASE_IMAGE="$BASE_IMAGE" \
+                            --build-arg PGOLDVERSIONS="$PGOLDVERSIONS" \
+                            --build-arg ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true \
+                            -t "$ECR_SUPABASE_IMAGE" \
+                            --push .
+                    cdp-promote-image "$ECR_SUPABASE_IMAGE"
 
 - id: tag-spilo
   type: script
