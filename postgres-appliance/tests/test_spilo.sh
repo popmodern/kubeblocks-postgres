@@ -12,7 +12,11 @@ readonly TIMEOUT=120
 
 function cleanup() {
     stop_containers
-    docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}" | xargs docker rm -f
+    local containers
+    containers=$(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
+    if [[ -n "$containers" ]]; then
+        docker rm -f $containers
+    fi
 }
 
 function get_non_leader() {
@@ -294,6 +298,31 @@ function verify_supabase_publication() {
     [ "$count" = "1" ]
 }
 
+function verify_supabase_custom_hook_rows() {
+    local count
+    local applied_as_count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.supabase_custom_hook_log WHERE hook_name IN ('001-directory-create','002-directory-extra','999-post-migration-file')\"")
+    applied_as_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.supabase_custom_hook_log WHERE hook_name IN ('001-directory-create','002-directory-extra','999-post-migration-file') AND applied_as = 'supabase_admin'\"")
+    [ "$count" = "3" ] && [ "$applied_as_count" = "3" ]
+}
+
+function verify_supabase_custom_tracking() {
+    local count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.spilo_supabase_custom_migrations WHERE identifier IN ('dir:001-directory-create.sql','dir:002-directory-extra.sql','file:/etc/postgresql.schema.sql')\"")
+    [ "$count" = "3" ]
+}
+
+function verify_supabase_custom_idempotence() {
+    local before_count
+    local after_count
+
+    before_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.spilo_supabase_custom_migrations\"")
+    docker_exec "$1" "/scripts/run_supabase_migrations.sh postgres"
+    after_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.spilo_supabase_custom_migrations\"")
+
+    [ "$before_count" = "$after_count" ] && [ "$after_count" = "3" ]
+}
+
 function test_supabase_bootstrap() {
     local container=$1
 
@@ -308,6 +337,30 @@ function test_supabase_bootstrap() {
     run_test verify_supabase_pgbouncer_auth "$container"
     run_test verify_supabase_migration_marker "$container"
     run_test verify_supabase_publication "$container"
+}
+
+function test_supabase_custom_sql() {
+    local container=$1
+
+    log_info "[TS9] Waiting for Supabase custom SQL bootstrap on $container..."
+    find_leader "$container" 1
+    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3"
+
+    run_test verify_supabase_custom_hook_rows "$container"
+    run_test verify_supabase_custom_tracking "$container"
+    run_test verify_supabase_custom_idempotence "$container"
+}
+
+function test_supabase_legacy_custom_sql() {
+    local container=$1
+
+    log_info "[TS10] Waiting for legacy Supabase custom SQL bootstrap on $container..."
+    find_leader "$container" 1
+    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1"
+    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3"
+
+    run_test verify_supabase_custom_hook_rows "$container"
+    run_test verify_supabase_custom_tracking "$container"
 }
 
 # TEST SUITE 1 - In-place major upgrade 14->15->16->17
@@ -446,6 +499,8 @@ function main() {
     test_spilo "$leader"
 
     test_supabase_bootstrap "${PREFIX}supabase"
+    test_supabase_custom_sql "${PREFIX}supabase-custom"
+    test_supabase_legacy_custom_sql "${PREFIX}supabase-legacy"
 }
 
 trap cleanup QUIT TERM EXIT
