@@ -14,6 +14,20 @@ INIT_SCRIPTS_DIR=${SUPABASE_ROOT}/migrations/db/init-scripts
 MIGRATIONS_DIR=${SUPABASE_ROOT}/migrations/db/migrations
 CUSTOM_MIGRATIONS_DIR=${SUPABASE_CUSTOM_MIGRATIONS_DIR:-/etc/postgresql.schema.d}
 CUSTOM_MIGRATION_FILE=${SUPABASE_CUSTOM_MIGRATION_FILE:-/etc/postgresql.schema.sql}
+CURRENT_STAGE=initialization
+
+log_supabase() {
+    echo "Supabase migrations: mode=${MODE} target_db=${TARGET_DB} stage=${CURRENT_STAGE} - $*"
+}
+
+report_error() {
+    local exit_code=$?
+
+    echo "ERROR: Supabase migrations failed: mode=${MODE} target_db=${TARGET_DB} stage=${CURRENT_STAGE} exit=${exit_code}" >&2
+    exit "$exit_code"
+}
+
+trap report_error ERR
 
 sql_literal() {
     printf "%s" "$1" | sed "s/'/''/g"
@@ -26,6 +40,8 @@ require_sql_dir() {
         echo "ERROR: missing Supabase migration directory: ${dir_path}" >&2
         exit 1
     fi
+
+    log_supabase "found required directory ${dir_path}"
 }
 
 sql_files() {
@@ -252,54 +268,87 @@ if [ "$TARGET_DB" != "postgres" ]; then
 fi
 
 PGVER=$(psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" -tAc "SELECT current_setting('server_version_num')::int / 10000")
+CURRENT_STAGE=environment-check
+log_supabase "starting with postgres_major=${PGVER} custom_dir=${CUSTOM_MIGRATIONS_DIR} custom_file=${CUSTOM_MIGRATION_FILE}"
 if [ "$MODE" != "custom-only" ] && [ "$PGVER" -lt 15 ]; then
     echo "ERROR: Supabase upstream migrations require PostgreSQL 15 or newer" >&2
     exit 1
 fi
 
+CURRENT_STAGE=ensure-custom-migrations-table
+log_supabase "ensuring custom migration tracking table"
 ensure_custom_migrations_table
 
 bundle_applied=false
 if [ "$MODE" != "custom-only" ]; then
+    CURRENT_STAGE=validate-bundle-directories
+    log_supabase "validating bundled Supabase migration directories"
     require_sql_dir "$INIT_SCRIPTS_DIR"
     require_sql_dir "$MIGRATIONS_DIR"
 
+    CURRENT_STAGE=bootstrap-supabase-admin
+    log_supabase "ensuring supabase_admin role exists"
     bootstrap_supabase_admin
+
+    CURRENT_STAGE=ensure-schema-migrations-table
+    log_supabase "ensuring schema_migrations table exists"
     ensure_schema_migrations_table
 
+    CURRENT_STAGE=detect-latest-migration
     LATEST_MIGRATION_VERSION=$(latest_sql_version "$MIGRATIONS_DIR")
+    log_supabase "latest bundled migration is ${LATEST_MIGRATION_VERSION}"
     if [ "$(is_migration_complete "$LATEST_MIGRATION_VERSION")" = "t" ]; then
-        echo "Supabase migration bundle already applied to ${TARGET_DB}"
+        log_supabase "bundled Supabase migrations already applied"
     else
+        CURRENT_STAGE=ensure-pgbouncer-auth-schema
+        log_supabase "ensuring pgbouncer auth schema exists"
         ensure_pgbouncer_auth_schema
+
+        CURRENT_STAGE=ensure-stat-extension-schema
+        log_supabase "ensuring pg_stat_statements lives in extensions schema"
         ensure_stat_extension_schema
+
+        CURRENT_STAGE=run-init-scripts
+        log_supabase "running bundled init scripts as postgres"
         run_sql_dir_as_role postgres "$INIT_SCRIPTS_DIR"
+
+        CURRENT_STAGE=run-migrations
+        log_supabase "running bundled migrations as supabase_admin"
         run_sql_dir_as_role supabase_admin "$MIGRATIONS_DIR"
         bundle_applied=true
+        log_supabase "bundled Supabase migrations finished"
     fi
 fi
 
 custom_applied=false
+CURRENT_STAGE=apply-custom-sql-hooks
+log_supabase "checking custom SQL hooks"
 if apply_custom_sql_hooks; then
     custom_applied=true
+    log_supabase "custom SQL hooks applied"
+else
+    log_supabase "no new custom SQL hooks applied"
 fi
 
 if [ "$bundle_applied" = true ] || [ "$custom_applied" = true ]; then
+    CURRENT_STAGE=reset-stats
+    log_supabase "resetting postgres stats after Supabase bootstrap changes"
     reset_stats
 fi
 
+CURRENT_STAGE=complete
 if [ "$MODE" = "custom-only" ]; then
     if [ "$custom_applied" = true ]; then
-        echo "Supabase custom SQL applied successfully to ${TARGET_DB}"
+        log_supabase "Supabase custom SQL applied successfully"
     else
-        echo "No new Supabase custom SQL to apply to ${TARGET_DB}"
+        log_supabase "no new Supabase custom SQL to apply"
     fi
 elif [ "$bundle_applied" = true ] && [ "$custom_applied" = true ]; then
-    echo "Supabase migration bundle and custom SQL applied successfully to ${TARGET_DB}"
+    log_supabase "Supabase migration bundle and custom SQL applied successfully"
 elif [ "$bundle_applied" = true ]; then
-    echo "Supabase migration bundle applied successfully to ${TARGET_DB}"
+    log_supabase "Supabase migration bundle applied successfully"
 elif [ "$custom_applied" = true ]; then
-    echo "Supabase custom SQL applied successfully to ${TARGET_DB}"
+    log_supabase "Supabase custom SQL applied successfully"
 else
-    echo "No new Supabase migrations to apply to ${TARGET_DB}"
+    log_supabase "no new Supabase migrations to apply"
 fi

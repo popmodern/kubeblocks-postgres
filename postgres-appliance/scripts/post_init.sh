@@ -4,6 +4,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 export PGOPTIONS="-c synchronous_commit=local -c search_path=pg_catalog"
 
+log_supabase_post_init() {
+    echo "Supabase post-init: db=$2 pgver=$PGVER extensions=${SUPABASE_EXTENSIONS_ENABLED} init=${SUPABASE_INIT_ENABLED} - $1"
+}
+
 PGVER=$(psql -d "$2" -XtAc "SELECT pg_catalog.current_setting('server_version_num')::int/10000")
 SUPABASE_EXTENSIONS_ENABLED=${ENABLE_SUPABASE_EXTENSIONS:-}
 SUPABASE_INIT_ENABLED=${ENABLE_SUPABASE_INIT:-}
@@ -29,6 +33,9 @@ if [ "$PGVER" -lt 17 ]; then
 else
     RESET_ARGS="oid, oid, bigint, bool"
 fi
+
+log_supabase_post_init "resolved bootstrap settings" "$2"
+log_supabase_post_init "starting base post-init SQL" "$2"
 
 (echo "\set ON_ERROR_STOP on"
 echo "DO \$\$
@@ -341,20 +348,35 @@ GRANT EXECUTE ON FUNCTION public.pg_stat_statements_reset($RESET_ARGS) TO admin;
 done < <(psql -d "$2" -tAc 'select pg_catalog.quote_ident(datname) from pg_catalog.pg_database where datallowconn')
 ) | psql -Xd "$2"
 
+log_supabase_post_init "base post-init SQL completed" "$2"
+
 # Optional: Supabase bootstrap (roles, schemas, event triggers, permissions)
 if [ "$SUPABASE_INIT_ENABLED" = "true" ]; then
+    log_supabase_post_init "bootstrap requested" "$2"
     if [ "$SUPABASE_EXTENSIONS_ENABLED" != "true" ]; then
         echo "ERROR: ENABLE_SUPABASE_INIT=true requires ENABLE_SUPABASE_EXTENSIONS=true" >&2
         exit 1
     fi
     if [ "$PGVER" -lt 15 ]; then
-        echo "Running legacy Supabase bootstrap SQL for PostgreSQL ${PGVER}..."
+        log_supabase_post_init "running legacy bootstrap SQL" "$2"
         while read -r db_name; do
+            log_supabase_post_init "applying legacy compatibility SQL on ${db_name}" "$2"
             psql -Xd "$db_name" -f /scripts/supabase_init.sql
-            /scripts/run_supabase_migrations.sh --custom-only "$db_name"
+            log_supabase_post_init "applying legacy custom SQL hooks on ${db_name}" "$2"
+            if ! /scripts/run_supabase_migrations.sh --custom-only "$db_name"; then
+                log_supabase_post_init "legacy custom SQL hooks failed on ${db_name}" "$2"
+                exit 1
+            fi
         done < <(psql -d "$2" -tAc "SELECT pg_catalog.quote_ident(datname) FROM pg_catalog.pg_database WHERE datallowconn AND datname NOT IN ('template0','template1')")
+        log_supabase_post_init "legacy bootstrap completed" "$2"
     else
-        echo "Running Supabase migration bundle on postgres..."
-        /scripts/run_supabase_migrations.sh postgres
+        log_supabase_post_init "running upstream migration bundle on postgres" "$2"
+        if ! /scripts/run_supabase_migrations.sh postgres; then
+            log_supabase_post_init "upstream migration bundle failed on postgres" "$2"
+            exit 1
+        fi
+        log_supabase_post_init "upstream migration bundle completed on postgres" "$2"
     fi
+else
+    log_supabase_post_init "bootstrap skipped" "$2"
 fi

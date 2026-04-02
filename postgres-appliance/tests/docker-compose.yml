@@ -137,6 +137,28 @@ services:
             PGVERSION: '14'
         hostname: supabase-legacy
         container_name: demo-supabase-legacy
+
+    supabase-legacy-custom:
+        image: ${SPILO_SUPABASE_TEST_IMAGE:-spilo-supabase}
+        networks: [ demo ]
+        depends_on: [ minio ]
+        environment:
+            SPILO_PROVIDER: 'local'
+            AWS_ACCESS_KEY_ID: *access_key
+            AWS_SECRET_ACCESS_KEY: *secret_key
+            AWS_ENDPOINT: *aws_endpoint
+            AWS_S3_FORCE_PATH_STYLE: *aws_s3_force_path_style
+            WAL_S3_BUCKET: *bucket
+            WALG_DISABLE_S3_SSE: *walg_disable_s3_sse
+            ETCDCTL_ENDPOINTS: http://etcd:2379
+            ETCD3_HOST: "etcd:2379"
+            SCOPE: supabase-legacy-custom
+            ENABLE_SUPABASE_EXTENSIONS: 'true'
+            ENABLE_SUPABASE_INIT: 'true'
+            PGSODIUM_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+            PGVERSION: '14'
+        hostname: supabase-legacy-custom
+        container_name: demo-supabase-legacy-custom
         volumes:
             - ./supabase_custom_sql/postgresql.schema.sql:/etc/postgresql.schema.sql:ro
             - ./supabase_custom_sql/postgresql.schema.d:/etc/postgresql.schema.d:ro
