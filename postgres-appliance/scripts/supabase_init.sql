@@ -1,5 +1,5 @@
--- Supabase bootstrap SQL for KubeBlocks Spilo
--- Based on Supabase initial-schema.sql and post-setup.sql migrations.
+-- Supabase bootstrap SQL for KubeBlocks Spilo PG14 compatibility mode.
+-- Upstream supabase/postgres no longer ships a PG14 bootstrap artifact we can vendor directly.
 -- Run once per database when ENABLE_SUPABASE_INIT=true.
 
 -- ============================================================================
@@ -48,9 +48,11 @@ BEGIN
         CREATE ROLE dashboard_user NOLOGIN NOINHERIT CREATEDB CREATEROLE;
     END IF;
 
-    -- supabase_admin: superuser-like admin
+    -- supabase_admin: compatibility admin role aligned with upstream custom-hook execution
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
-        CREATE ROLE supabase_admin NOLOGIN NOINHERIT BYPASSRLS CREATEROLE CREATEDB;
+        CREATE ROLE supabase_admin LOGIN SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS;
+    ELSE
+        ALTER ROLE supabase_admin WITH LOGIN SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS;
     END IF;
 END
 $$;
