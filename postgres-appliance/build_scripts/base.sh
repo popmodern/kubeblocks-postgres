@@ -136,6 +136,7 @@ install_modern_libcurl() {
         make
         make install
     )
+    printf '/usr/local/lib\n' > /etc/ld.so.conf.d/00-spilo-local-libcurl.conf
     rm -f /usr/local/bin/curl /usr/local/bin/curl-config
     ldconfig
     rm -rf "$curl_archive" "$curl_source_dir"
@@ -192,14 +193,22 @@ build_pgxs_extension() {
     local ext_name="$2"
     local source_dir="$3"
     local install_target="${4:-install-strip}"
+    local make_args=()
+    local pg_cppflags
 
     if ! extension_supports_version "$ext_name" "$version"; then
         echo "Skipping ${ext_name} for pg${version}; $(extension_support_note "$ext_name")" >&2
         return 0
     fi
 
-    PATH="/usr/lib/postgresql/$version/bin:$PATH" make -C "$source_dir" USE_PGXS=1 clean
-    PATH="/usr/lib/postgresql/$version/bin:$PATH" make -C "$source_dir" USE_PGXS=1 "$install_target"
+    if [ "$ext_name" = "pg_net" ] || [ "$ext_name" = "http" ]; then
+        pg_cppflags=$(PATH="/usr/lib/postgresql/$version/bin:$PATH" pg_config --cppflags)
+        make_args+=("CPPFLAGS=${pg_cppflags} -I/usr/local/include")
+        make_args+=("SHLIB_LINK=-L/usr/local/lib -Wl,-rpath,/usr/local/lib -lcurl")
+    fi
+
+    PATH="/usr/lib/postgresql/$version/bin:$PATH" make -C "$source_dir" USE_PGXS=1 "${make_args[@]}" clean
+    PATH="/usr/lib/postgresql/$version/bin:$PATH" make -C "$source_dir" USE_PGXS=1 "${make_args[@]}" "$install_target"
 }
 
 for version in $DEB_PG_SUPPORTED_VERSIONS; do

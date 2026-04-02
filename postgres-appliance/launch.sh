@@ -24,6 +24,10 @@ else
     ln -snf /usr/lib/locale/locale-archive.22 /run/locale-archive
 fi
 
+if [ -f /usr/local/lib/libcurl.so.4 ]; then
+    export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 mkdir -p "$PGLOG" "$PGDATA" "$RW_DIR/postgresql" "$RW_DIR/tmp" "$RW_DIR/certs"
 if [ "$(id -u)" -ne 0 ]; then
     sed -e "s/^postgres:x:[^:]*:[^:]*:/postgres:x:$(id -u):$(id -g):/" /etc/passwd > "$RW_DIR/tmp/passwd"
