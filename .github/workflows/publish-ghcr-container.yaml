@@ -72,12 +72,6 @@ jobs:
         load: true
         tags: ${{ steps.image.outputs.NAME }}
 
-    - name: Test spilo docker image 
-      env:
-        SPILO_TEST_IMAGE: "${{ steps.image.outputs.NAME }}"
-      run: |
-        bash postgres-appliance/tests/test_spilo.sh 
-
     - name: Build and export Supabase-default image for smoke testing
       uses: docker/build-push-action@v7
       with:
@@ -91,6 +85,12 @@ jobs:
       run: |
         docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${{ steps.image.outputs.SUPABASE_NAME }}" | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'
         docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${{ steps.image.outputs.SUPABASE_NAME }}" | grep '^ENABLE_SUPABASE_INIT=false$'
+
+    - name: Test container images
+      env:
+        SPILO_TEST_IMAGE: "${{ steps.image.outputs.NAME }}"
+        SPILO_SUPABASE_TEST_IMAGE: "${{ steps.image.outputs.SUPABASE_NAME }}"
+      run: bash postgres-appliance/tests/test_spilo.sh
 
     - name: Build arm64 additionaly and push multiarch image to ghcr
       uses: docker/build-push-action@v7

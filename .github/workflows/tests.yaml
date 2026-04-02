@@ -42,6 +42,9 @@ jobs:
         docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' spilo-supabase | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'
         docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' spilo-supabase | grep '^ENABLE_SUPABASE_INIT=false$'
     - name: Test spilo docker image
+      env:
+        SPILO_TEST_IMAGE: spilo
+        SPILO_SUPABASE_TEST_IMAGE: spilo-supabase
       run: bash postgres-appliance/tests/test_spilo.sh
     - name: Test USE_OLD_LOCALES
       run: bash -x postgres-appliance/tests/locales_test/test_locales.sh
