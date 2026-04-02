@@ -157,14 +157,6 @@ function test_successful_inplace_upgrade_to_17() {
     docker_exec "$1" "PGVERSION=17 $UPGRADE_SCRIPT 3"
 }
 
-function test_successful_inplace_upgrade_to_18() {
-    docker_exec "$1" "PGVERSION=18 $UPGRADE_SCRIPT 3"
-}
-
-function test_pg_upgrade_to_18_check_failed() {
-    ! test_successful_inplace_upgrade_to_18 "$1"
-}
-
 function start_clone_with_walg_upgrade_container() {
     local ID=${1:-1}
 
@@ -183,10 +175,10 @@ function start_clone_with_walg_upgrade_replica_container() {
     start_clone_with_walg_upgrade_container 2
 }
 
-function start_clone_with_walg_upgrade_to_18_container() {
+function start_clone_with_walg_upgrade_to_17_container() {
     docker-compose run \
         -e SCOPE=upgrade3 \
-        -e PGVERSION=18 \
+    -e PGVERSION=17 \
         -e CLONE_SCOPE=demo \
         -e CLONE_PGVERSION=14 \
         -e CLONE_METHOD=CLONE_WITH_WALG \
@@ -195,12 +187,12 @@ function start_clone_with_walg_upgrade_to_18_container() {
         -d "spilo3"
 }
 
-function start_clone_with_walg_18_container() {
+function start_clone_with_walg_17_container() {
     docker-compose run \
         -e SCOPE=clone17 \
-        -e PGVERSION=18 \
+    -e PGVERSION=17 \
         -e CLONE_SCOPE=upgrade3 \
-        -e CLONE_PGVERSION=18 \
+    -e CLONE_PGVERSION=17 \
         -e CLONE_METHOD=CLONE_WITH_WALG \
         -e CLONE_TARGET_TIME="$(next_hour)" \
         --name "${PREFIX}clone17" \
@@ -225,7 +217,7 @@ function start_clone_with_basebackup_upgrade_container() {
 function start_clone_with_hourly_log_rotation() {
     docker-compose run \
         -e SCOPE=hourlylogs \
-        -e PGVERSION=18 \
+        -e PGVERSION=17 \
         -e LOG_SHIP_HOURLY="true" \
         -e CLONE_SCOPE=upgrade2 \
         -e CLONE_PGVERSION=16 \
@@ -260,8 +252,8 @@ function verify_hourly_log_rotation() {
     [ "$log_rotation_age" = "1h" ] && [ "$log_filename" = "postgresql-%u-%H.log" ] && [ "$postgres_log_ftables" -eq 192 ] && [ "$postgres_log_views" -eq 8 ] && [ "$postgres_failed_auth_views" -eq 200 ]
 }
 
-# TEST SUITE 1 - In-place major upgrade 14->15->...->18
-# TEST SUITE 2 - Major upgrade 14->18 after wal-g clone (with CLONE_PGVERSION set)
+# TEST SUITE 1 - In-place major upgrade 14->15->16->17
+# TEST SUITE 2 - Major upgrade 14->17 after wal-g clone (with CLONE_PGVERSION set)
 # TEST SUITE 3 - PITR (clone with wal-g) with unreachable target (15+)
 # TEST SUITE 4 - Major upgrade 14->15 after wal-g clone (no CLONE_PGVERSION)
 # TEST SUITE 5 - Replica bootstrap with wal-g
@@ -288,8 +280,8 @@ function test_spilo() {
 
     # TEST SUITE 2
     local upgrade3_container
-    upgrade3_container=$(start_clone_with_walg_upgrade_to_18_container) # SCOPE=upgrade3 PGVERSION=18 CLONE: _SCOPE=demo _PGVERSION=14 _TARGET_TIME=<next_min>
-    log_info "[TS2] Started $upgrade3_container for testing major upgrade 14->18 after clone with wal-g"
+    upgrade3_container=$(start_clone_with_walg_upgrade_to_17_container) # SCOPE=upgrade3 PGVERSION=17 CLONE: _SCOPE=demo _PGVERSION=14 _TARGET_TIME=<next_min>
+    log_info "[TS2] Started $upgrade3_container for testing major upgrade 14->17 after clone with wal-g"
 
 
     # TEST SUITE 4
@@ -302,7 +294,7 @@ function test_spilo() {
     # wait clone to finish and prevent timescale installation gets cloned
     find_leader "$upgrade3_container"
     find_leader "$upgrade_container"
-    create_timescaledb "$container" # we don't install it at the beginning, as we do 14->18 in a clone
+    create_timescaledb "$container" # we don't install it at the beginning, as we do 14->17 in a clone
 
     log_info "[TS1] Testing in-place major upgrade 14->15"
     wait_zero_lag "$container"
@@ -311,17 +303,17 @@ function test_spilo() {
     run_test test_envdir_updated_to_x 15
 
     # TEST SUITE 2
-    log_info "[TS2] Testing in-place major upgrade 14->18 after wal-g clone"
-    run_test verify_clone_upgrade "$upgrade3_container" "wal-g" 14 18
+    log_info "[TS2] Testing in-place major upgrade 14->17 after wal-g clone"
+    run_test verify_clone_upgrade "$upgrade3_container" "wal-g" 14 17
 
     run_test verify_archive_mode_is_on "$upgrade3_container"
     wait_backup "$upgrade3_container"
 
 
     # TEST SUITE 3
-    local clone18_container
-    clone18_container=$(start_clone_with_walg_18_container) # SCOPE=clone18 CLONE: _SCOPE=upgrade3 _PGVERSION=18 _TARGET_TIME=<next_hour>
-    log_info "[TS3] Started $clone18_container for testing point-in-time recovery (clone with wal-g) with unreachable target on 15+"
+    local clone17_container
+    clone17_container=$(start_clone_with_walg_17_container) # SCOPE=clone17 CLONE: _SCOPE=upgrade3 _PGVERSION=17 _TARGET_TIME=<next_hour>
+    log_info "[TS3] Started $clone17_container for testing point-in-time recovery (clone with wal-g) with unreachable target on 15+"
 
 
     # TEST SUITE 1
@@ -332,8 +324,8 @@ function test_spilo() {
 
 
     # TEST SUITE 3
-    find_leader "$clone18_container"
-    run_test verify_archive_mode_is_on "$clone18_container"
+    find_leader "$clone17_container"
+    run_test verify_archive_mode_is_on "$clone17_container"
 
 
     # TEST SUITE 1
@@ -366,17 +358,6 @@ function test_spilo() {
     wait_backup "$basebackup_container"
 
     # TEST SUITE 1
-    # run_test test_pg_upgrade_to_18_check_failed "$container"  # pg_upgrade --check complains about timescaledb
-
-    wait_backup "$container"
-
-    drop_timescaledb "$container"
-    log_info "[TS1] Testing in-place major upgrade 17->18"
-    run_test test_successful_inplace_upgrade_to_18 "$container"
-    wait_all_streaming "$container"
-    run_test test_envdir_updated_to_x 18
-
-
     # TEST SUITE 5
     log_info "[TS5] Waiting for postgres to start in the $upgrade_replica_container and stream from primary..."
     wait_all_streaming "$upgrade_container" 1

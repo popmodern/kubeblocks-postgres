@@ -1,5 +1,5 @@
 ARG BASE_IMAGE=ubuntu:22.04
-ARG PGVERSION=18
+ARG PGVERSION=17
 ARG DEMO=false
 ARG COMPRESS=false
 ARG ADDITIONAL_LOCALES=
@@ -46,7 +46,7 @@ ARG PGVERSION
 ARG TIMESCALEDB_APACHE_ONLY=true
 ARG TIMESCALEDB_TOOLKIT=true
 ARG COMPRESS
-ARG PGOLDVERSIONS="14 15 16 17"
+ARG PGOLDVERSIONS="14 15 16"
 ARG WITH_PERL=false
 
 ARG DEB_PG_SUPPORTED_VERSIONS="$PGOLDVERSIONS $PGVERSION"
@@ -54,7 +54,7 @@ ARG DEB_PG_SUPPORTED_VERSIONS="$PGOLDVERSIONS $PGVERSION"
 # Install PostgreSQL, extensions and contribs
 ENV POSTGIS_VERSION=3.6 \
     BG_MON_COMMIT=a73c6bcd10dfdf9feaf5eabab7eb6b12d167680d \
-    PG_AUTH_MON_COMMIT=fe099eef7662cbc85b0b79191f47f52f1e96b779 \
+    PG_ACCESS_MON_COMMIT=fe099eef7662cbc85b0b79191f47f52f1e96b779 \
     PG_MON_COMMIT=88ac7b58348aa061c814982defc170644f368f39 \
     PLPROFILER=REL4_2_5 \
     PG_PROFILE=4.11 \
@@ -62,10 +62,11 @@ ENV POSTGIS_VERSION=3.6 \
     CURL_VERSION=8.10.1 \
     CURL_TARBALL_SHA256=d15ebab765d793e2e96db090f0e172d127859d78ca6f6391d7eafecfd894bbc0 \
     PGSODIUM_VERSION=3.1.8 \
+    PGSODIUM_COMMIT=54c06acf3ad06cc5c9c77d350cf58c7c25052454 \
     VAULT_VERSION=0.3.1 \
     PG_NET_VERSION=0.20.0 \
-    SUPAUTILS_VERSION=2.8.0 \
-    HTTP_VERSION=1.6.1 \
+    SUPAUTILS_VERSION=3.2.0 \
+    HTTP_VERSION=1.6.3 \
     PG_SAFEUPDATE_VERSION=1.4 \
     PG_HASHIDS_COMMIT=cd0e1b31d52b394a0df64079406a14a4f7387cd6 \
     PG_PLAN_FILTER_COMMIT=5081a7b5cb890876e67d8e7486b6a64c38c9a492 \
@@ -132,11 +133,12 @@ WORKDIR $PGHOME
 COPY motd /etc/
 COPY runit /etc/service/
 COPY pgq_ticker.ini $PGHOME/
-COPY build_scripts/post_build.sh /builddeps/
+COPY build_scripts/post_build.sh build_scripts/verify_commands.sh /builddeps/
 
-RUN sh /builddeps/post_build.sh && rm -rf /builddeps/
+RUN sh /builddeps/post_build.sh
 
 COPY scripts bootstrap major_upgrade /scripts/
+RUN chmod +x /scripts/pgsodium_getkey.sh && sh /builddeps/verify_commands.sh && rm -rf /builddeps/
 COPY launch.sh /
 
 CMD ["/bin/sh", "/launch.sh", "init"]

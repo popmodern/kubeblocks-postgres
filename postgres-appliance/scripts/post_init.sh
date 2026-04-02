@@ -321,3 +321,15 @@ GRANT EXECUTE ON FUNCTION public.pg_stat_statements_reset($RESET_ARGS) TO admin;
     cat metric_helpers.sql
 done < <(psql -d "$2" -tAc 'select pg_catalog.quote_ident(datname) from pg_catalog.pg_database where datallowconn')
 ) | psql -Xd "$2"
+
+# Optional: Supabase bootstrap (roles, schemas, event triggers, permissions)
+if [ "${ENABLE_SUPABASE_INIT:-}" = "true" ]; then
+    if [ "${ENABLE_SUPABASE_EXTENSIONS:-}" != "true" ]; then
+        echo "ERROR: ENABLE_SUPABASE_INIT=true requires ENABLE_SUPABASE_EXTENSIONS=true" >&2
+        exit 1
+    fi
+    echo "Running Supabase bootstrap SQL..."
+    while read -r db_name; do
+        psql -Xd "$db_name" -f /scripts/supabase_init.sql
+    done < <(psql -d "$2" -tAc "SELECT pg_catalog.quote_ident(datname) FROM pg_catalog.pg_database WHERE datallowconn AND datname NOT IN ('template0','template1')")
+fi

@@ -1168,6 +1168,9 @@ def main():
     if 'extwlist.extensions' not in user_config.get('postgresql', {}).get('parameters', {}):
         config['postgresql']['parameters']['extwlist.extensions'] =\
                 append_extensions(config['postgresql']['parameters']['extwlist.extensions'], version, True)
+    if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true' and \
+            'pgsodium.getkey_script' not in user_config.get('postgresql', {}).get('parameters', {}):
+        config['postgresql']['parameters']['pgsodium.getkey_script'] = '/scripts/pgsodium_getkey.sh'
 
     # Ensure replication is available
     if 'pg_hba' in config['bootstrap'] and not any(['replication' in i for i in config['bootstrap']['pg_hba']]):
