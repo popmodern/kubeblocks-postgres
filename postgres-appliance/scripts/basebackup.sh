@@ -37,6 +37,7 @@ mkdir -p "$WAL_FAST"
 
 rm -fr "$DATA_DIR" "${WAL_FAST:?}"/*
 
+# shellcheck disable=SC2329
 function sigterm_handler() {
     kill -SIGTERM "$receivewal_pid" "$basebackup_pid"
     exit 143
@@ -119,4 +120,4 @@ while [[ $((ATTEMPT++)) -le $RETRIES ]]; do
 done
 
 [[ $EXITCODE != 0 && -n $receivewal_pid ]] && kill "$receivewal_pid"
-exit $EXITCODE
+exit "$EXITCODE"

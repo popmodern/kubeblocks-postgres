@@ -569,7 +569,7 @@ if [ "$DEMO" != "true" ]; then
 
         for e in pgq pgq_node plproxy address_standardizer address_standardizer_data_us; do
             orig=$(basename "$(find . -maxdepth 1 -type f -name "$e--*--*.sql" | head -n1)")
-            if [ "x$orig" != "x" ]; then
+            if [ "$orig" != "" ]; then
                 for f in "$e"--*--*.sql; do
                     if [ "$f" != "$orig" ] && [ ! -L "$f" ] && diff "$f" "$orig" > /dev/null; then
                         echo "creating symlink $f -> $orig"

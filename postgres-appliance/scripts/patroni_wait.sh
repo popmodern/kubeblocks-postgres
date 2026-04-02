@@ -63,7 +63,7 @@ if [ $# -gt 0 ]; then
     [ -n "$TIMEOUT" ] && CUTOFF=$(($(date +%s)+TIMEOUT))
 
     while [ "$(curl -so /dev/null -w '%{http_code}' "http://localhost:8008/$ROLE")" != "200" ]; do
-        [ -n "$TIMEOUT" ] && [ $CUTOFF -le "$(date +%s)" ] && exit 2
+        [ -n "$TIMEOUT" ] && [ "$CUTOFF" -le "$(date +%s)" ] && exit 2
         sleep "$INTERVAL"
     done
 

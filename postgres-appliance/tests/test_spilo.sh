@@ -15,7 +15,7 @@ function cleanup() {
     local containers
     containers=$(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
     if [[ -n "$containers" ]]; then
-        docker rm -f $containers
+        docker rm -f "$containers"
     fi
 }
 
