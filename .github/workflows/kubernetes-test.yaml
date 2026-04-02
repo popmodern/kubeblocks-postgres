@@ -4,14 +4,12 @@ on:
   pull_request:
     paths:
     - 'kubernetes/**'
-    - 'postgres-appliance/**'
   push:
     branches:
     - trigger
     - support-supabase-extensions-and-tables
     paths:
     - 'kubernetes/**'
-    - 'postgres-appliance/**'
   workflow_dispatch:
 
 jobs:
