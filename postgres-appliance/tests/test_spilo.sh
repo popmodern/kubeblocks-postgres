@@ -8,6 +8,7 @@ source ./test_utils.sh
 readonly PREFIX="demo-"
 readonly UPGRADE_SCRIPT="python3 /scripts/inplace_upgrade.py"
 readonly TIMEOUT=120
+readonly SUPABASE_TIMEOUT=300
 
 
 function cleanup() {
@@ -32,7 +33,7 @@ function get_non_leader() {
 function find_leader() {
     local container=$1
     local silent=$2
-    declare -r timeout=$TIMEOUT
+    declare -r timeout=${3:-$TIMEOUT}
     local attempts=0
 
     while true; do
@@ -86,8 +87,8 @@ function wait_query() {
     local container=$1
     local query=$2
     local result=$3
+    declare -r timeout=${4:-$TIMEOUT}
 
-    declare -r timeout=$TIMEOUT
     local attempts=0
 
     while true; do
@@ -97,6 +98,7 @@ function wait_query() {
         fi
         ((attempts++))
         if [[ $attempts -ge $timeout ]]; then
+            docker logs "$container"
             log_error "Query \"$query\" didn't return expected result $result after $timeout seconds"
         fi
         sleep 1
@@ -435,8 +437,8 @@ function test_supabase_bootstrap() {
     local container=$1
 
     log_info "[TS8] Waiting for Supabase bootstrap on $container..."
-    find_leader "$container" 1
-    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1"
+    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1" "$SUPABASE_TIMEOUT"
 
     run_test verify_supabase_wal_level "$container"
     run_test verify_supabase_roles "$container"
@@ -452,8 +454,8 @@ function test_supabase_custom_sql() {
     local container=$1
 
     log_info "[TS9] Waiting for Supabase custom SQL bootstrap on $container..."
-    find_leader "$container" 1
-    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3"
+    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3" "$SUPABASE_TIMEOUT"
 
     run_test verify_supabase_custom_hook_rows "$container"
     run_test verify_supabase_custom_tracking "$container"
@@ -464,9 +466,9 @@ function test_supabase_legacy_custom_sql() {
     local container=$1
 
     log_info "[TS10] Waiting for legacy Supabase custom SQL bootstrap on $container..."
-    find_leader "$container" 1
-    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1"
-    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3"
+    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    wait_query "$container" "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'supabase_admin'" "1" "$SUPABASE_TIMEOUT"
+    wait_query "$container" "SELECT CASE WHEN to_regclass('public.supabase_custom_hook_log') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.supabase_custom_hook_log) END" "3" "$SUPABASE_TIMEOUT"
 
     run_test verify_supabase_custom_hook_rows "$container"
     run_test verify_supabase_custom_tracking "$container"
@@ -605,13 +607,14 @@ function test_spilo() {
 
 function main() {
     cleanup
-    start_containers
+    start_containers etcd spilo1 spilo2 spilo3
 
     log_info "Waiting for leader..."
     local leader
     leader="$PREFIX$(find_leader "${PREFIX}spilo1")"
     test_spilo "$leader"
 
+    start_containers supabase supabase-custom supabase-legacy
     test_supabase_bootstrap "${PREFIX}supabase"
     test_supabase_custom_sql "${PREFIX}supabase-custom"
     test_supabase_legacy_custom_sql "${PREFIX}supabase-legacy"

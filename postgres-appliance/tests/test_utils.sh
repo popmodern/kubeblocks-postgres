@@ -41,7 +41,7 @@ function next_hour() {
 }
 
 function start_containers() {
-    docker-compose up -d
+    docker-compose up -d "$@"
 }
 
 function stop_containers() {
