@@ -24,7 +24,7 @@ require_file() {
 }
 
 require_libcurl_from_usr_local() {
-    local extension_lib="$1"
+    extension_lib="$1"
 
     if ! ldd "$extension_lib" | grep -Eq 'libcurl\.so\.4 => /usr/local/lib/'; then
         echo "ERROR: $extension_lib does not resolve libcurl.so.4 from /usr/local/lib" >&2
@@ -34,8 +34,6 @@ require_libcurl_from_usr_local() {
 }
 
 require_preferred_libcurl() {
-    local first_libcurl
-
     first_libcurl=$(ldconfig -p | awk '/libcurl\.so\.4 \(/ {print $NF; exit}')
     if [ "$first_libcurl" != "/usr/local/lib/libcurl.so.4" ]; then
         echo "ERROR: ldconfig does not prefer /usr/local/lib/libcurl.so.4 (got ${first_libcurl:-<none>})" >&2
@@ -57,7 +55,8 @@ require_file /usr/local/lib/cron_unprivileged.so
 require_file /usr/local/lib/libcurl.so.4
 require_preferred_libcurl
 
-for extension_lib in $(find /usr/lib/postgresql -path '*/lib/pg_net.so' -o -path '*/lib/http.so'); do
+find /usr/lib/postgresql \( -path '*/lib/pg_net.so' -o -path '*/lib/http.so' \) -print |
+while IFS= read -r extension_lib; do
     require_file "$extension_lib"
     require_libcurl_from_usr_local "$extension_lib"
 done

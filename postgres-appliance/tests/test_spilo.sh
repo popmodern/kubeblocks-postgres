@@ -12,10 +12,10 @@ readonly TIMEOUT=120
 
 function cleanup() {
     stop_containers
-    local containers
-    containers=$(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
-    if [[ -n "$containers" ]]; then
-        docker rm -f $containers
+    local -a containers
+    mapfile -t containers < <(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
+    if (( ${#containers[@]} > 0 )); then
+        docker rm -f "${containers[@]}"
     fi
 }
 
