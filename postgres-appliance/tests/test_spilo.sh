@@ -252,23 +252,49 @@ function csv_has_extension() {
     printf '%s\n' "$csv" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qx "$extension_name"
 }
 
-function verify_general_extension_whitelist() {
-    local whitelist
-    whitelist=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW extwlist.extensions\"")
+function missing_available_whitelist_extensions() {
+    local container=$1
+    shift
+    local sql_extensions=''
+    local extension_name
 
-    csv_has_extension "$whitelist" hypopg &&
-    csv_has_extension "$whitelist" vector &&
-    csv_has_extension "$whitelist" pg_repack &&
-    csv_has_extension "$whitelist" pgaudit &&
-    csv_has_extension "$whitelist" pgtap &&
-    csv_has_extension "$whitelist" pg_hashids &&
-    csv_has_extension "$whitelist" safeupdate &&
-    csv_has_extension "$whitelist" http &&
-    csv_has_extension "$whitelist" rum &&
-    csv_has_extension "$whitelist" index_advisor &&
-    csv_has_extension "$whitelist" pgrouting &&
-    csv_has_extension "$whitelist" postgis &&
-    csv_has_extension "$whitelist" plpgsql_check
+    for extension_name in "$@"; do
+        if [[ -n "$sql_extensions" ]]; then
+            sql_extensions+="," 
+        fi
+        sql_extensions+="'${extension_name}'"
+    done
+
+    docker_exec "$container" "psql -U postgres -d postgres -tAc \"
+        WITH expected(name) AS (
+            SELECT unnest(ARRAY[${sql_extensions}])
+        ), allowed(name) AS (
+            SELECT btrim(value)
+            FROM unnest(string_to_array(current_setting('extwlist.extensions'), ',')) AS value
+        )
+        SELECT COALESCE(string_agg(expected.name, ',' ORDER BY expected.name), '')
+        FROM expected
+        WHERE EXISTS (
+            SELECT 1
+            FROM pg_available_extensions
+            WHERE name = expected.name
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM allowed
+            WHERE allowed.name = expected.name
+        )\""
+}
+
+function verify_general_extension_whitelist() {
+    local missing
+    missing=$(missing_available_whitelist_extensions "$1" \
+        hypopg vector pg_repack pgaudit pgtap pg_hashids safeupdate http \
+        rum index_advisor pgrouting postgis plpgsql_check)
+    if [[ -n "$missing" ]]; then
+        echo "Missing installed whitelist extensions: $missing"
+        return 1
+    fi
 }
 
 function verify_supabase_extension_whitelist_is_opt_in() {
