@@ -1,5 +1,11 @@
 name: Publish multiarch images on ghcr.io
 on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Tag to publish when running this workflow manually
+        required: true
+        type: string
   push:
     tags:
       - '*'
@@ -33,9 +39,16 @@ jobs:
     - name: Derive spilo image name
       id: image
       working-directory: postgres-appliance
+      env:
+        MANUAL_IMAGE_TAG: ${{ inputs.image_tag }}
       run: |
         PGVERSION=$(sed -n 's/^ARG PGVERSION=\([1-9][0-9]*\).*$/\1/p' Dockerfile)
-        IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-$PGVERSION:${GITHUB_REF/refs\/tags\//}"
+        if [[ "${GITHUB_EVENT_NAME}" == 'workflow_dispatch' ]]; then
+          IMAGE_TAG="$MANUAL_IMAGE_TAG"
+        else
+          IMAGE_TAG="$GITHUB_REF_NAME"
+        fi
+        IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-$PGVERSION:${IMAGE_TAG}"
         echo "NAME=$IMAGE" >> $GITHUB_OUTPUT
 
     - name: Set up QEMU
