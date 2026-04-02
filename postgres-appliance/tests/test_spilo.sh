@@ -15,7 +15,7 @@ function cleanup() {
     local containers
     containers=$(docker ps -q --filter="ancestor=${SPILO_TEST_IMAGE:-spilo}" --filter="name=${PREFIX}")
     if [[ -n "$containers" ]]; then
-        docker rm -f "$containers"
+        docker rm -f $containers
     fi
 }
 
@@ -245,6 +245,88 @@ function verify_archive_mode_is_on() {
     [ "$archive_mode" = "on" ]
 }
 
+function csv_has_extension() {
+    local csv=$1
+    local extension_name=$2
+
+    printf '%s\n' "$csv" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qx "$extension_name"
+}
+
+function verify_general_extension_whitelist() {
+    local whitelist
+    whitelist=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW extwlist.extensions\"")
+
+    csv_has_extension "$whitelist" hypopg &&
+    csv_has_extension "$whitelist" vector &&
+    csv_has_extension "$whitelist" pg_repack &&
+    csv_has_extension "$whitelist" pgaudit &&
+    csv_has_extension "$whitelist" pgtap &&
+    csv_has_extension "$whitelist" pg_hashids &&
+    csv_has_extension "$whitelist" safeupdate &&
+    csv_has_extension "$whitelist" http &&
+    csv_has_extension "$whitelist" rum &&
+    csv_has_extension "$whitelist" index_advisor &&
+    csv_has_extension "$whitelist" pgrouting &&
+    csv_has_extension "$whitelist" postgis &&
+    csv_has_extension "$whitelist" plpgsql_check
+}
+
+function verify_supabase_extension_whitelist_is_opt_in() {
+    local whitelist
+    whitelist=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW extwlist.extensions\"")
+
+    ! csv_has_extension "$whitelist" pg_graphql &&
+    ! csv_has_extension "$whitelist" pg_jsonschema &&
+    ! csv_has_extension "$whitelist" pgjwt &&
+    ! csv_has_extension "$whitelist" pgmq &&
+    ! csv_has_extension "$whitelist" supabase_vault &&
+    ! csv_has_extension "$whitelist" wrappers
+}
+
+function verify_extwlist_custom_path() {
+    local custom_path
+    custom_path=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW extwlist.custom_path\"")
+    [ "$custom_path" = "/scripts" ]
+}
+
+function verify_default_preload_libraries() {
+    local preload
+    preload=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW shared_preload_libraries\"")
+    csv_has_extension "$preload" bg_mon &&
+    csv_has_extension "$preload" pg_stat_statements &&
+    csv_has_extension "$preload" pgextwlist &&
+    csv_has_extension "$preload" pg_auth_mon &&
+    csv_has_extension "$preload" set_user &&
+    csv_has_extension "$preload" timescaledb &&
+    csv_has_extension "$preload" pg_cron &&
+    csv_has_extension "$preload" pg_stat_kcache &&
+    csv_has_extension "$preload" pg_mon &&
+    ! csv_has_extension "$preload" pgsodium &&
+    ! csv_has_extension "$preload" pg_net &&
+    ! csv_has_extension "$preload" pg_tle &&
+    ! csv_has_extension "$preload" pg_stat_monitor &&
+    ! csv_has_extension "$preload" pg_plan_filter &&
+    ! csv_has_extension "$preload" supautils
+}
+
+function verify_supabase_extension_whitelist() {
+    local whitelist
+    whitelist=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW extwlist.extensions\"")
+
+    csv_has_extension "$whitelist" pg_graphql &&
+    csv_has_extension "$whitelist" pg_jsonschema &&
+    csv_has_extension "$whitelist" pgjwt &&
+    csv_has_extension "$whitelist" pgmq &&
+    csv_has_extension "$whitelist" supabase_vault &&
+    csv_has_extension "$whitelist" wrappers
+}
+
+function verify_default_created_extensions() {
+    local count
+    count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_extension WHERE extname IN ('pg_auth_mon','pg_cron','file_fdw','pg_stat_statements','pg_stat_kcache','set_user','pg_mon')\"")
+    [ "$count" = "7" ]
+}
+
 function verify_hourly_log_rotation() {
     log_rotation_age=$(docker_exec "$1" "psql -U postgres -tAc \"SHOW log_rotation_age\"")
     log_filename=$(docker_exec "$1" "psql -U postgres -tAc \"SHOW log_filename\"")
@@ -334,6 +416,7 @@ function test_supabase_bootstrap() {
     run_test verify_supabase_roles "$container"
     run_test verify_supabase_schemas "$container"
     run_test verify_supabase_extensions "$container"
+    run_test verify_supabase_extension_whitelist "$container"
     run_test verify_supabase_pgbouncer_auth "$container"
     run_test verify_supabase_migration_marker "$container"
     run_test verify_supabase_publication "$container"
@@ -375,6 +458,11 @@ function test_spilo() {
     local container=$1
 
     run_test test_envdir_suffix "$container" 14
+    run_test verify_default_preload_libraries "$container"
+    run_test verify_general_extension_whitelist "$container"
+    run_test verify_supabase_extension_whitelist_is_opt_in "$container"
+    run_test verify_extwlist_custom_path "$container"
+    run_test verify_default_created_extensions "$container"
 
     log_info "[TS1] Testing wrong upgrade setups"
     run_test test_inplace_upgrade_wrong_version "$container"

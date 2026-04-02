@@ -11,21 +11,34 @@ PATRONI_CONFIG_FILE = os.path.join(RW_DIR, 'postgres.yml')
 LIB_DIR = '/usr/lib/postgresql'
 SHARE_DIR = '/usr/share/postgresql'
 
-extension_control_files = {
-    'vault': 'supabase_vault',
-}
-
 # (min_version, max_version, shared_preload_libraries, extwlist.extensions)
 extensions = {
     'timescaledb':    (9.6, 17, True,  True),
     'pg_cron':        (9.5, 17, True,  False),
     'pg_stat_kcache': (9.4, 17, True,  False),
     'pg_partman':     (9.4, 17, False, True),
+    'hypopg':         (14, 17, False, True),
+    'vector':         (14, 17, False, True),
+    'pg_repack':      (14, 17, False, True),
+    'pgaudit':        (14, 17, False, True),
+    'pgtap':          (14, 17, False, True),
+    'pg_hashids':     (14, 17, False, True),
+    'safeupdate':     (14, 17, False, True),
+    'http':           (14, 17, False, True),
+    'rum':            (14, 17, False, True),
+    'index_advisor':  (14, 17, False, True),
+    'pgroonga':       (14, 17, False, True),
+    'pgrouting':      (14, 17, False, True),
+    'postgis':        (14, 17, False, True),
+    'plpgsql_check':  (14, 17, False, True),
 }
 if os.environ.get('ENABLE_PG_MON') == 'true':
     extensions['pg_mon'] = (11,  17, True,  False)
 
 if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true':
+    # Keep preload-sensitive or Supabase-bootstrap-specific items behind the
+    # Supabase gate. General CREATE EXTENSION surfaces that are already built
+    # into the image live in the base registry above.
     extensions.update({
         'pgsodium':        (14, 17, True,  False),
         'pg_net':          (14, 17, True,  True),
@@ -34,19 +47,11 @@ if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true':
         'pg_plan_filter':  (14, 17, True,  False),
         'supautils':       (14, 17, True,  False),
         'pgjwt':           (14, 17, False, True),
-        'pgtap':           (14, 17, False, True),
         'pgmq':            (14, 17, False, True),
-        'pg_hashids':      (14, 17, False, True),
         'pg_graphql':      (14, 17, False, True),
         'pg_jsonschema':   (14, 17, False, True),
-        'safeupdate':      (14, 17, False, True),
-        'vault':           (14, 17, False, True),
-        'http':            (14, 17, False, True),
-        'rum':             (14, 17, False, True),
-        'index_advisor':   (14, 17, False, True),
+        'supabase_vault':  (14, 17, False, True),
         'wrappers':        (14, 17, False, True),
-        'pgroonga':        (14, 17, False, True),
-        'pgrouting':       (14, 17, False, True),
     })
 
 
@@ -89,9 +94,8 @@ def append_extensions(old, version, extwlist=False):
 
 
 def extension_is_installed(name, version):
-    control_name = extension_control_files.get(name, name)
     version_name = str(int(version)) if float(version).is_integer() else str(version)
-    control_path = os.path.join(SHARE_DIR, version_name, 'extension', '{0}.control'.format(control_name))
+    control_path = os.path.join(SHARE_DIR, version_name, 'extension', '{0}.control'.format(name))
     return os.path.isfile(control_path)
 
 
