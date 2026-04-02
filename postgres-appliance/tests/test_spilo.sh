@@ -178,7 +178,7 @@ function start_clone_with_walg_upgrade_replica_container() {
 function start_clone_with_walg_upgrade_to_17_container() {
     docker-compose run \
         -e SCOPE=upgrade3 \
-    -e PGVERSION=17 \
+        -e PGVERSION=17 \
         -e CLONE_SCOPE=demo \
         -e CLONE_PGVERSION=14 \
         -e CLONE_METHOD=CLONE_WITH_WALG \
@@ -190,9 +190,9 @@ function start_clone_with_walg_upgrade_to_17_container() {
 function start_clone_with_walg_17_container() {
     docker-compose run \
         -e SCOPE=clone17 \
-    -e PGVERSION=17 \
+        -e PGVERSION=17 \
         -e CLONE_SCOPE=upgrade3 \
-    -e CLONE_PGVERSION=17 \
+        -e CLONE_PGVERSION=17 \
         -e CLONE_METHOD=CLONE_WITH_WALG \
         -e CLONE_TARGET_TIME="$(next_hour)" \
         --name "${PREFIX}clone17" \
