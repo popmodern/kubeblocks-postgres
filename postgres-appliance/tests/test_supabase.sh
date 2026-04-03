@@ -270,16 +270,18 @@ function verify_supabase_extensions() {
 function verify_supabase_extension_whitelist() {
     local whitelist
     local missing
+    local wrappers_available
 
     whitelist=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW extwlist.extensions\"")
     missing=$(missing_available_whitelist_extensions "$1" pg_graphql pg_jsonschema pgjwt pgmq supabase_vault wrappers)
+    wrappers_available=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'wrappers')\"")
 
     csv_has_extension "$whitelist" pg_graphql &&
     csv_has_extension "$whitelist" pg_jsonschema &&
     csv_has_extension "$whitelist" pgjwt &&
     csv_has_extension "$whitelist" pgmq &&
     csv_has_extension "$whitelist" supabase_vault &&
-    csv_has_extension "$whitelist" wrappers &&
+    { [ "$wrappers_available" != "t" ] || csv_has_extension "$whitelist" wrappers; } &&
     [ -z "$missing" ]
 }
 

@@ -62,6 +62,18 @@ psql_target_db() {
     psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" "$@"
 }
 
+psql_bootstrap_superuser_db() {
+    local role_name
+
+    role_name=$(bootstrap_superuser_name)
+    if [ -z "$role_name" ]; then
+        echo "ERROR: failed to determine bootstrap superuser role name" >&2
+        exit 1
+    fi
+
+    psql -v ON_ERROR_STOP=1 -X -U "$role_name" -d "$TARGET_DB" "$@"
+}
+
 psql_target_db_as() {
     local role_name=$1
     shift
@@ -186,8 +198,11 @@ print_migration_plan() {
     require_sql_dir "$MIGRATIONS_DIR"
 
     plan_log "source bundle root ${SUPABASE_ROOT}"
-    plan_log "execution order follows upstream supabase/postgres migrate.sh: init-scripts as postgres, migrations as supabase_admin, then custom hooks"
+    plan_log "execution order follows upstream supabase/postgres migrate.sh: init-scripts as postgres, bootstrap helper SQL as postgres, migrations as supabase_admin, then custom hooks"
     print_plan_section "bundled init-scripts" postgres "sql_files \"$INIT_SCRIPTS_DIR\""
+    plan_log "bootstrap helper SQL (run as postgres)"
+    printf '  - pgbouncer auth schema [extension-runtime,role-privileges]\n'
+    printf '  - pg_stat_statements schema normalization [extension-runtime]\n'
     print_plan_section "bundled migrations" supabase_admin "sql_files \"$MIGRATIONS_DIR\""
     print_plan_section "custom SQL hooks from directory" supabase_admin "optional_sql_files \"$CUSTOM_MIGRATIONS_DIR\""
 
@@ -216,7 +231,7 @@ is_migration_complete() {
 }
 
 bootstrap_supabase_admin() {
-    psql_target_db <<'SQL'
+    psql_bootstrap_superuser_db <<'SQL'
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
@@ -254,7 +269,7 @@ ensure_upstream_supabase_role_layout() {
             ;;
     esac
 
-    psql_target_db <<SQL
+    psql_bootstrap_superuser_db <<SQL
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${swap_role}') THEN
@@ -266,7 +281,7 @@ END
 \$\$;
 SQL
 
-    psql_target_db <<SQL
+    psql_bootstrap_superuser_db <<SQL
 SET SESSION AUTHORIZATION ${swap_role};
 ALTER ROLE postgres RENAME TO supabase_admin__bootstrap_tmp;
 ALTER ROLE supabase_admin RENAME TO postgres;
@@ -286,7 +301,7 @@ SQL
 }
 
 ensure_custom_migrations_table() {
-    psql_target_db <<'SQL'
+    psql_bootstrap_superuser_db <<'SQL'
 CREATE TABLE IF NOT EXISTS public.spilo_supabase_custom_migrations (
     identifier text PRIMARY KEY,
     checksum text NOT NULL,
@@ -350,6 +365,12 @@ BEGIN
     END IF;
 END
 $$;
+SQL
+}
+
+ensure_postgres_demoted() {
+    psql_target_db_as supabase_admin <<'SQL'
+ALTER ROLE postgres WITH NOSUPERUSER;
 SQL
 }
 
@@ -525,6 +546,10 @@ if [ "$MODE" != "custom-only" ]; then
     if [ "$(is_migration_complete "$LATEST_MIGRATION_VERSION")" = "t" ]; then
         log_supabase "bundled Supabase migrations already applied"
     else
+        CURRENT_STAGE=run-init-scripts
+        log_supabase "running bundled init scripts as postgres"
+        run_sql_dir_as_role postgres "$INIT_SCRIPTS_DIR"
+
         CURRENT_STAGE=ensure-pgbouncer-auth-schema
         log_supabase "ensuring pgbouncer auth schema exists"
         ensure_pgbouncer_auth_schema
@@ -533,16 +558,16 @@ if [ "$MODE" != "custom-only" ]; then
         log_supabase "ensuring pg_stat_statements lives in extensions schema"
         ensure_stat_extension_schema
 
-        CURRENT_STAGE=run-init-scripts
-        log_supabase "running bundled init scripts as postgres"
-        run_sql_dir_as_role postgres "$INIT_SCRIPTS_DIR"
-
         CURRENT_STAGE=run-migrations
         log_supabase "running bundled migrations as supabase_admin"
         run_sql_dir_as_role supabase_admin "$MIGRATIONS_DIR"
         bundle_applied=true
         log_supabase "bundled Supabase migrations finished"
     fi
+
+    CURRENT_STAGE=demote-postgres-role
+    log_supabase "ensuring postgres role is no longer a superuser"
+    ensure_postgres_demoted
 fi
 
 custom_applied=false
