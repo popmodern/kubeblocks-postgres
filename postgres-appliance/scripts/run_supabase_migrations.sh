@@ -33,8 +33,6 @@ TARGET_DB=${1:-postgres}
 SUPABASE_ROOT=/usr/share/supabase/postgres
 INIT_SCRIPTS_DIR=${SUPABASE_ROOT}/migrations/db/init-scripts
 MIGRATIONS_DIR=${SUPABASE_ROOT}/migrations/db/migrations
-INIT_SCRIPTS_MANIFEST=${INIT_SCRIPTS_DIR}.manifest
-MIGRATIONS_MANIFEST=${MIGRATIONS_DIR}.manifest
 INIT_SCRIPTS_BUNDLE=${INIT_SCRIPTS_DIR}.bundle.sql
 MIGRATIONS_BUNDLE=${MIGRATIONS_DIR}.bundle.sql
 CUSTOM_MIGRATIONS_DIR=${SUPABASE_CUSTOM_MIGRATIONS_DIR:-/etc/postgresql.schema.d}
@@ -62,6 +60,7 @@ psql_target_db() {
     psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" "$@"
 }
 
+# shellcheck disable=SC2120
 psql_bootstrap_superuser_db() {
     local role_name
 
@@ -231,6 +230,7 @@ is_migration_complete() {
 }
 
 bootstrap_supabase_admin() {
+    # shellcheck disable=SC2119
     psql_bootstrap_superuser_db <<'SQL'
 DO $$
 BEGIN
@@ -269,6 +269,7 @@ ensure_upstream_supabase_role_layout() {
             ;;
     esac
 
+    # shellcheck disable=SC2119
     psql_bootstrap_superuser_db <<SQL
 DO \$\$
 BEGIN
@@ -281,6 +282,7 @@ END
 \$\$;
 SQL
 
+    # shellcheck disable=SC2119
     psql_bootstrap_superuser_db <<SQL
 SET SESSION AUTHORIZATION ${swap_role};
 ALTER ROLE postgres RENAME TO supabase_admin__bootstrap_tmp;
@@ -301,6 +303,7 @@ SQL
 }
 
 ensure_custom_migrations_table() {
+    # shellcheck disable=SC2119
     psql_bootstrap_superuser_db <<'SQL'
 CREATE TABLE IF NOT EXISTS public.spilo_supabase_custom_migrations (
     identifier text PRIMARY KEY,
