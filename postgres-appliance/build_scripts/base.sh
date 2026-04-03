@@ -9,52 +9,19 @@ MAKEFLAGS="-j $(grep -c ^processor /proc/cpuinfo)"
 export MAKEFLAGS
 SYSTEM_CURL=/usr/bin/curl
 MODERN_LIBCURL_PREFIX=/opt/libcurl-modern
+SUPABASE_RELEASE_ASSET_SHA_FILE=/builddeps/supabase_release_assets.sha256
 
 set -ex
 sed -i 's/^#\s*\(deb.*universe\)$/\1/g' /etc/apt/sources.list
 
 apt-get update
 
-lookup_github_release_asset_sha() {
-    local repo="$1"
-    local tag="$2"
-    local asset_name="$3"
+lookup_pinned_release_asset_sha() {
+    local asset_name="$1"
 
-    python3 - "$repo" "$tag" "$asset_name" <<'PY'
-import json
-import re
-import sys
-import urllib.request
-
-repo, tag, asset_name = sys.argv[1:]
-
-release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
-request = urllib.request.Request(
-    release_url,
-    headers={"Accept": "application/vnd.github+json"},
-)
-
-try:
-    with urllib.request.urlopen(request) as response:
-        release = json.load(response)
-    for asset in release.get("assets", []):
-        if asset.get("name") != asset_name:
-            continue
-        digest = asset.get("digest") or ""
-        if digest.startswith("sha256:"):
-            print(digest.split(":", 1)[1])
-            raise SystemExit(0)
-except Exception:
-    pass
-
-with urllib.request.urlopen(f"https://github.com/{repo}/releases/tag/{tag}") as response:
-    html = response.read().decode("utf-8", errors="ignore")
-
-pattern = re.escape(asset_name) + r'.{0,500}?sha256:([0-9a-f]{64})'
-match = re.search(pattern, html, re.S)
-if match:
-    print(match.group(1))
-PY
+    awk -v asset_name="$asset_name" '
+        $0 !~ /^#/ && NF >= 2 && $2 == asset_name { print $1; exit }
+    ' "$SUPABASE_RELEASE_ASSET_SHA_FILE"
 }
 
 download_and_verify_sha256() {
@@ -510,7 +477,9 @@ for version in $DEB_PG_SUPPORTED_VERSIONS; do
 
     ARCH=$(dpkg --print-architecture)
 
-    # Install pre-built release artifacts from GitHub Releases (.deb packages)
+    # Install pre-built release artifacts from GitHub Releases (.deb packages).
+    # The image pins exact versions, so the expected digests are also pinned in-repo
+    # instead of being discovered live from the GitHub API during each build.
     for ext_name in pg_graphql pg_jsonschema wrappers; do
         case $ext_name in
             pg_graphql)    ext_ver=$PG_GRAPHQL_VERSION ;;
@@ -519,21 +488,18 @@ for version in $DEB_PG_SUPPORTED_VERSIONS; do
         esac
         asset_name="${ext_name}-v${ext_ver}-pg${version}-${ARCH}-linux-gnu.deb"
         deb_url="https://github.com/supabase/${ext_name}/releases/download/v${ext_ver}/${asset_name}"
-        expected_sha=$(lookup_github_release_asset_sha "supabase/${ext_name}" "v${ext_ver}" "$asset_name")
+        expected_sha=$(lookup_pinned_release_asset_sha "$asset_name")
         if [ -z "$expected_sha" ]; then
             if [ "$ext_name" = "wrappers" ]; then
                 echo "Skipping wrappers for pg${version}-${ARCH}; upstream v${ext_ver} does not publish ${asset_name}" >&2
                 continue
             fi
-            echo "ERROR: unable to resolve SHA256 for ${asset_name} from the GitHub release page" >&2
+            echo "ERROR: missing pinned SHA256 for ${asset_name} in ${SUPABASE_RELEASE_ASSET_SHA_FILE}" >&2
             exit 1
         fi
-        if download_and_verify_sha256 "$deb_url" "/tmp/${ext_name}-pg${version}.deb" "$expected_sha"; then
-            dpkg -i "/tmp/${ext_name}-pg${version}.deb"
-            rm -f "/tmp/${ext_name}-pg${version}.deb"
-        else
-            echo "Skipping ${ext_name} for pg${version}-${ARCH} (no .deb available)"
-        fi
+        download_and_verify_sha256 "$deb_url" "/tmp/${ext_name}-pg${version}.deb" "$expected_sha"
+        dpkg -i "/tmp/${ext_name}-pg${version}.deb"
+        rm -f "/tmp/${ext_name}-pg${version}.deb"
     done
 done
 

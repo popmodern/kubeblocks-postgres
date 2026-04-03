@@ -1,0 +1,43 @@
+# GENERATED FILE. Do not edit by hand.
+# Regenerate with:
+#   python3 postgres-appliance/build_scripts/generate_supabase_release_assets.py
+#
+# This lockfile records GitHub release asset sha256 digests for the Supabase
+# native extension .deb packages consumed by postgres-appliance/build_scripts/base.sh.
+#
+# Authentication:
+#   Set GITHUB_TOKEN to avoid low anonymous GitHub API rate limits.
+#
+# Pinned release tags:
+#   supabase/pg_graphql v1.5.12
+#   supabase/pg_jsonschema v0.3.4
+#   supabase/wrappers v0.6.0
+
+e4a46fecc9f52a6dc51b5b00f256a2efe813bca9738bc0eccb2980cc5cb32e80  pg_graphql-v1.5.12-pg14-amd64-linux-gnu.deb
+4c777f232201c785dcd441327c35a68fe3fd29f2430a27489ecffd15040167b0  pg_graphql-v1.5.12-pg14-arm64-linux-gnu.deb
+8d9d7bf046268af1913538f6f4c4b81b370a3134079b16aa4105f0cb54a3ab1c  pg_graphql-v1.5.12-pg15-amd64-linux-gnu.deb
+1f06240733a8b96a4f76816c7d2a31e1e06dadac1f6cfa3da095cb3637fa5abf  pg_graphql-v1.5.12-pg15-arm64-linux-gnu.deb
+76d719e85788e16f67f1a777e46deabedbc13eed67c7f45a011a4be7e113fb99  pg_graphql-v1.5.12-pg16-amd64-linux-gnu.deb
+82f33e9dec760d7474c0ff953414f28ba06da62abbfe03890391f9050320be6a  pg_graphql-v1.5.12-pg16-arm64-linux-gnu.deb
+173325eab5bbb5c99019053d3e02ede8fd41012a35f25c152286365d37f29e71  pg_graphql-v1.5.12-pg17-amd64-linux-gnu.deb
+fe97960f23010435f9b701def95445dda1f40d9771ff6e3445d9ee5e17d396b8  pg_graphql-v1.5.12-pg17-arm64-linux-gnu.deb
+013d59d378131355055ab9b2db9f0a7e47dd46c0af5efb4a918121238019ddc8  pg_graphql-v1.5.12-pg18-amd64-linux-gnu.deb
+37099831350370b6265d6314ed801a18dc771abcca014e31b5dbb452ec13af64  pg_graphql-v1.5.12-pg18-arm64-linux-gnu.deb
+853c8e22805e615a65cbfd664cfcdd1b06af8226aaec7c7b5713461bc27193dd  pg_jsonschema-v0.3.4-pg14-amd64-linux-gnu.deb
+ccf002b67c06e8748b5ed18833185d2a1dc429262a39a2e3a94f3a8e073d8bb5  pg_jsonschema-v0.3.4-pg14-arm64-linux-gnu.deb
+306e7e459a4a825e5c29fa9923f1e9a75c676b7d5bbaf040943359db2656e971  pg_jsonschema-v0.3.4-pg15-amd64-linux-gnu.deb
+a4aecaae7b1eb36835224b863abc1798e6ff13f9a0a8bf29965192c0264779b8  pg_jsonschema-v0.3.4-pg15-arm64-linux-gnu.deb
+0135e1df71032880ff52a5e51a787a08cf724e5c3a4b455bba9a22ecd368fb68  pg_jsonschema-v0.3.4-pg16-amd64-linux-gnu.deb
+28496d630b5c99415e77680d6d5a522f67be43170b30fbef376caeab9966dd74  pg_jsonschema-v0.3.4-pg16-arm64-linux-gnu.deb
+4c339c178a7396b4076fb1eb5ffe3430bafd3d5f92fb6c917ad49860237db6c9  pg_jsonschema-v0.3.4-pg17-amd64-linux-gnu.deb
+312f3b6b7b0e9f4d55c1ecd7b16c774da62482869e64745594b8c0f8af753414  pg_jsonschema-v0.3.4-pg17-arm64-linux-gnu.deb
+5c7fe6c810835e4242fb0365b57581c0009b0155200dd4f1266cee434295732f  pg_jsonschema-v0.3.4-pg18-amd64-linux-gnu.deb
+49355efc355cb8815ae482551b64598b0752f3b8cbc7a9d201bc66a91714e254  pg_jsonschema-v0.3.4-pg18-arm64-linux-gnu.deb
+6563562111ef1925bcae99e93af993c561b3df09c67025a4436da01005e89eaf  wrappers-v0.6.0-pg14-amd64-linux-gnu.deb
+0e54cecfe817ed947e0e03ae79d5eba9abda3f78da3bc5b6b75c6d504bde9625  wrappers-v0.6.0-pg14-arm64-linux-gnu.deb
+559f2b87dfd83b2bff17b707075247fd249d08ab857d88e0ddb726e1db0edc55  wrappers-v0.6.0-pg15-amd64-linux-gnu.deb
+61684b86f0db3abe1cd14d20ce6d278c04e30e07eb3641b9bd6885fa8198b401  wrappers-v0.6.0-pg15-arm64-linux-gnu.deb
+2077803d476be2f67c8aceb16d9c105d2ebbe4fd72ea69cd7fddd53918d8917f  wrappers-v0.6.0-pg16-amd64-linux-gnu.deb
+18e8038d411ccc8b53c6b920c870b93efd7a968570c8910630a4926fdf9ca65b  wrappers-v0.6.0-pg16-arm64-linux-gnu.deb
+be5aff0192207c9b2468c436b59b50afdf41a1873670bd227756e356830e5032  wrappers-v0.6.0-pg17-amd64-linux-gnu.deb
+bcea9ec6afb7c5e744bb79cb995fc4b1e4d70dcfd8d7fa37adfa5a66a07f8201  wrappers-v0.6.0-pg18-amd64-linux-gnu.deb
