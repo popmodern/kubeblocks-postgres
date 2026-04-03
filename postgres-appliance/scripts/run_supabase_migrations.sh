@@ -3,10 +3,31 @@
 set -euo pipefail
 
 MODE=full
-if [ "${1:-}" = "--custom-only" ]; then
-    MODE=custom-only
-    shift
-fi
+ACTION=apply
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --custom-only)
+            MODE=custom-only
+            shift
+            ;;
+        --plan|--list)
+            ACTION=plan
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "ERROR: unsupported option: $1" >&2
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 TARGET_DB=${1:-postgres}
 SUPABASE_ROOT=/usr/share/supabase/postgres
@@ -18,6 +39,10 @@ CURRENT_STAGE=initialization
 
 log_supabase() {
     echo "Supabase migrations: mode=${MODE} target_db=${TARGET_DB} stage=${CURRENT_STAGE} - $*"
+}
+
+plan_log() {
+    echo "Supabase migration plan: $*"
 }
 
 report_error() {
@@ -60,6 +85,101 @@ optional_sql_files() {
     sql_files "$dir_path"
 }
 
+plan_tags() {
+    local file_name=$1
+    local -a tags
+
+    tags=()
+
+    case "$file_name" in
+        *postgres*|*role*|*grant*|*revoke*|*search_path*|*lock_timeout*)
+            tags+=(role-privileges)
+            ;;
+    esac
+
+    case "$file_name" in
+        *auth*|*storage*|*realtime*)
+            tags+=(schema-data-model)
+            ;;
+    esac
+
+    case "$file_name" in
+        *pg_graphql*|*pg_net*|*pgsodium*|*vault*|*orioledb*|*pgmq*|*pgrst*|*pgbouncer*|*safeupdate*)
+            tags+=(extension-runtime)
+            ;;
+    esac
+
+    case "$file_name" in
+        *trigger*|*post-setup*)
+            tags+=(event-triggers)
+            ;;
+    esac
+
+    case "$file_name" in
+        *subscription*|*predefined_role*|*with_admin*|*privileged_role*)
+            tags+=(pg-version-sensitive)
+            ;;
+    esac
+
+    if [ ${#tags[@]} -eq 0 ]; then
+        tags+=(general)
+    fi
+
+    local tag
+    local joined_tags=''
+    for tag in "${tags[@]}"; do
+        if [ -n "$joined_tags" ]; then
+            joined_tags+=','
+        fi
+        joined_tags+="$tag"
+    done
+
+    printf '%s' "$joined_tags"
+}
+
+print_plan_section() {
+    local title=$1
+    local role_name=$2
+    local file_list_command=$3
+    local sql_file
+    local file_name
+    local tags
+    local count=0
+
+    plan_log "$title (run as ${role_name})"
+    while IFS= read -r sql_file; do
+        [ -n "$sql_file" ] || continue
+        file_name=$(basename "$sql_file")
+        tags=$(plan_tags "$file_name")
+        printf '  - %s [%s]\n' "$file_name" "$tags"
+        count=$((count + 1))
+    done < <(eval "$file_list_command")
+
+    if [ "$count" -eq 0 ]; then
+        printf '  - none\n'
+    fi
+}
+
+print_migration_plan() {
+    require_sql_dir "$INIT_SCRIPTS_DIR"
+    require_sql_dir "$MIGRATIONS_DIR"
+
+    plan_log "source bundle root ${SUPABASE_ROOT}"
+    plan_log "execution order follows upstream supabase/postgres migrate.sh: init-scripts as postgres, migrations as supabase_admin, then custom hooks"
+    print_plan_section "bundled init-scripts" postgres "sql_files \"$INIT_SCRIPTS_DIR\""
+    print_plan_section "bundled migrations" supabase_admin "sql_files \"$MIGRATIONS_DIR\""
+    print_plan_section "custom SQL hooks from directory" supabase_admin "optional_sql_files \"$CUSTOM_MIGRATIONS_DIR\""
+
+    plan_log "custom SQL hook file (run as supabase_admin)"
+    if [ -f "$CUSTOM_MIGRATION_FILE" ]; then
+        printf '  - %s [%s]\n' "$(basename "$CUSTOM_MIGRATION_FILE")" "$(plan_tags "$(basename "$CUSTOM_MIGRATION_FILE")")"
+    else
+        printf '  - none\n'
+    fi
+
+    plan_log "high-risk categories to inspect first: role-privileges, extension-runtime, pg-version-sensitive"
+}
+
 latest_sql_version() {
     local dir_path=$1
     local last_file
@@ -85,6 +205,38 @@ BEGIN
     END IF;
 END
 $$;
+SQL
+}
+
+bootstrap_superuser_name() {
+    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" -tAc "SELECT rolname FROM pg_roles WHERE oid = 10"
+}
+
+ensure_upstream_supabase_role_layout() {
+    local bootstrap_role
+
+    bootstrap_role=$(bootstrap_superuser_name)
+    case "$bootstrap_role" in
+        supabase_admin)
+            return 0
+            ;;
+        postgres)
+            ;;
+        '')
+            echo "ERROR: failed to determine bootstrap superuser role name" >&2
+            exit 1
+            ;;
+        *)
+            echo "ERROR: unsupported bootstrap superuser role name: ${bootstrap_role}" >&2
+            exit 1
+            ;;
+    esac
+
+    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<'SQL'
+ALTER ROLE postgres RENAME TO supabase_admin__bootstrap_tmp;
+ALTER ROLE supabase_admin RENAME TO postgres;
+ALTER ROLE supabase_admin__bootstrap_tmp RENAME TO supabase_admin;
+ALTER DATABASE postgres OWNER TO postgres;
 SQL
 }
 
@@ -262,6 +414,11 @@ RESET ROLE;
 SQL
 }
 
+if [ "$ACTION" = "plan" ]; then
+    print_migration_plan
+    exit 0
+fi
+
 if [ "$TARGET_DB" != "postgres" ]; then
     echo "ERROR: Supabase migrations are only supported against the postgres database" >&2
     exit 1
@@ -289,6 +446,10 @@ if [ "$MODE" != "custom-only" ]; then
     CURRENT_STAGE=bootstrap-supabase-admin
     log_supabase "ensuring supabase_admin role exists"
     bootstrap_supabase_admin
+
+    CURRENT_STAGE=normalize-upstream-role-layout
+    log_supabase "aligning bootstrap role names with upstream Supabase expectations"
+    ensure_upstream_supabase_role_layout
 
     CURRENT_STAGE=ensure-schema-migrations-table
     log_supabase "ensuring schema_migrations table exists"

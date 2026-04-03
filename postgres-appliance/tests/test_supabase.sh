@@ -302,6 +302,20 @@ function verify_supabase_publication() {
     [ "$count" = "1" ]
 }
 
+function verify_supabase_bootstrap_role_name() {
+    local bootstrap_role
+
+    bootstrap_role=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT rolname FROM pg_roles WHERE oid = 10\"")
+    [ "$bootstrap_role" = "supabase_admin" ]
+}
+
+function verify_supabase_postgres_demoted() {
+    local postgres_superuser
+
+    postgres_superuser=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT rolsuper FROM pg_roles WHERE rolname = 'postgres'\"")
+    [ "$postgres_superuser" = "f" ]
+}
+
 function verify_supabase_custom_hook_rows() {
     local count
     local applied_as_count
@@ -368,6 +382,8 @@ function run_supabase_bundle_assertions() {
     run_test verify_supabase_pgbouncer_auth "$container"
     run_test verify_supabase_migration_marker "$container"
     run_test verify_supabase_publication "$container"
+    run_test verify_supabase_bootstrap_role_name "$container"
+    run_test verify_supabase_postgres_demoted "$container"
 }
 
 function run_supabase_legacy_assertions() {
