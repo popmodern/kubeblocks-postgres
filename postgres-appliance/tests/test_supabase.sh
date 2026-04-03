@@ -319,9 +319,11 @@ function verify_supabase_postgres_demoted() {
 function verify_supabase_custom_hook_rows() {
     local count
     local applied_as_count
+    local session_user_count
     count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.supabase_custom_hook_log WHERE hook_name IN ('001-directory-create','002-directory-extra','999-post-migration-file')\"")
     applied_as_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.supabase_custom_hook_log WHERE hook_name IN ('001-directory-create','002-directory-extra','999-post-migration-file') AND applied_as = 'supabase_admin'\"")
-    [ "$count" = "3" ] && [ "$applied_as_count" = "3" ]
+    session_user_count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM public.supabase_custom_hook_log WHERE hook_name IN ('001-directory-create','002-directory-extra','999-post-migration-file') AND applied_session_user = 'supabase_admin'\"")
+    [ "$count" = "3" ] && [ "$applied_as_count" = "3" ] && [ "$session_user_count" = "3" ]
 }
 
 function verify_supabase_custom_tracking() {
