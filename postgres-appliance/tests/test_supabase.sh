@@ -5,6 +5,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 # shellcheck disable=SC1091
 source ./test_utils.sh
 
+# Supabase tests also start the etcd service from docker-compose.yml, which
+# uses SPILO_TEST_IMAGE. If only SPILO_SUPABASE_TEST_IMAGE is set, reuse it.
+export SPILO_TEST_IMAGE=${SPILO_TEST_IMAGE:-${SPILO_SUPABASE_TEST_IMAGE:-spilo}}
+
 readonly PREFIX="demo-"
 readonly SUPABASE_TIMEOUT=300
 readonly SUPABASE_PROGRESS_INTERVAL=10

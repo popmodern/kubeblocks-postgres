@@ -48,6 +48,13 @@ jobs:
         else
           IMAGE_TAG="$GITHUB_REF_NAME"
         fi
+        if [[ "$IMAGE_TAG" == *-supabase ]]; then
+          IMAGE_TAG="${IMAGE_TAG%-supabase}"
+        fi
+        if [[ -z "$IMAGE_TAG" ]]; then
+          echo "ERROR: derived image tag is empty" >&2
+          exit 1
+        fi
         IMAGE_BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-$PGVERSION"
         echo "NAME=${IMAGE_BASE}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
         echo "SUPABASE_NAME=${IMAGE_BASE}:${IMAGE_TAG}-supabase" >> $GITHUB_OUTPUT
@@ -71,6 +78,8 @@ jobs:
         context: "postgres-appliance/"
         load: true
         tags: ${{ steps.image.outputs.NAME }}
+        cache-from: type=gha,scope=publish-spilo
+        cache-to: type=gha,scope=publish-spilo,mode=max
 
     - name: Build and export Supabase-default image for smoke testing
       uses: docker/build-push-action@v7
@@ -80,6 +89,10 @@ jobs:
         tags: ${{ steps.image.outputs.SUPABASE_NAME }}
         build-args: |
           ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
+        cache-from: |
+          type=gha,scope=publish-spilo
+          type=gha,scope=publish-spilo-supabase
+        cache-to: type=gha,scope=publish-spilo-supabase,mode=max
 
     - name: Smoke test Supabase-default image metadata
       run: |
@@ -93,6 +106,7 @@ jobs:
 
     - name: Test Supabase bootstrap image
       env:
+        SPILO_TEST_IMAGE: "${{ steps.image.outputs.SUPABASE_NAME }}"
         SPILO_SUPABASE_TEST_IMAGE: "${{ steps.image.outputs.SUPABASE_NAME }}"
       run: bash postgres-appliance/tests/test_supabase.sh
 
@@ -103,6 +117,8 @@ jobs:
         push: true
         tags: "${{ steps.image.outputs.NAME }}"
         platforms: linux/amd64,linux/arm64
+        cache-from: type=gha,scope=publish-spilo
+        cache-to: type=gha,scope=publish-spilo,mode=max
 
     - name: Build arm64 additionaly and push Supabase-default multiarch image to ghcr
       uses: docker/build-push-action@v7
@@ -113,3 +129,7 @@ jobs:
         platforms: linux/amd64,linux/arm64
         build-args: |
           ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
+        cache-from: |
+          type=gha,scope=publish-spilo
+          type=gha,scope=publish-spilo-supabase
+        cache-to: type=gha,scope=publish-spilo-supabase,mode=max

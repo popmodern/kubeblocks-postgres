@@ -19,6 +19,6 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - name: Create Kind Cluster
-      uses: helm/kind-action@v1.1.0
+      uses: helm/kind-action@v1
     - name: Install Spilo
       run: kubectl apply -f kubernetes/spilo_kubernetes.yaml
