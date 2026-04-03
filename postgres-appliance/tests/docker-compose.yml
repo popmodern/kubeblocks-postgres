@@ -113,8 +113,16 @@ services:
         hostname: supabase-custom
         container_name: demo-supabase-custom
         volumes:
-            - ./supabase_custom_sql/postgresql.schema.sql:/etc/postgresql.schema.sql:ro
-            - ./supabase_custom_sql/postgresql.schema.d:/etc/postgresql.schema.d:ro
+            - type: bind
+              source: ${COMPOSE_BIND_ROOT:-.}/supabase_custom_sql/postgresql.schema.sql
+              target: /etc/postgresql.schema.sql
+              read_only: true
+            - type: bind
+              source: ${COMPOSE_BIND_ROOT:-.}/supabase_custom_sql/postgresql.schema.d
+              target: /etc/postgresql.schema.d
+              read_only: true
+            # - ./supabase_custom_sql/postgresql.schema.sql:/etc/postgresql.schema.sql:ro
+            # - ./supabase_custom_sql/postgresql.schema.d:/etc/postgresql.schema.d:ro
 
     supabase-legacy:
         image: ${SPILO_SUPABASE_TEST_IMAGE:-spilo-supabase}
@@ -160,5 +168,13 @@ services:
         hostname: supabase-legacy-custom
         container_name: demo-supabase-legacy-custom
         volumes:
-            - ./supabase_custom_sql/postgresql.schema.sql:/etc/postgresql.schema.sql:ro
-            - ./supabase_custom_sql/postgresql.schema.d:/etc/postgresql.schema.d:ro
+            - type: bind
+              source: ${COMPOSE_BIND_ROOT:-.}/supabase_custom_sql/postgresql.schema.sql
+              target: /etc/postgresql.schema.sql
+              read_only: true
+            - type: bind
+              source: ${COMPOSE_BIND_ROOT:-.}/supabase_custom_sql/postgresql.schema.d
+              target: /etc/postgresql.schema.d
+              read_only: true
+            # - ./supabase_custom_sql/postgresql.schema.sql:/etc/postgresql.schema.sql:ro
+            # - ./supabase_custom_sql/postgresql.schema.d:/etc/postgresql.schema.d:ro
