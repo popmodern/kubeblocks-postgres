@@ -12,6 +12,10 @@ on:
     - 'kubernetes/**'
   workflow_dispatch:
 
+concurrency:
+  group: kubernetes-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   kubernetes-installation-test:
     runs-on: ubuntu-20.04

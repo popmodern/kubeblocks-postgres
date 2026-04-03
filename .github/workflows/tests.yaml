@@ -15,34 +15,46 @@ on:
         default: true
         type: boolean
 
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  tests:
+  lint:
     runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v6
     - name: Set up packages
-      run: sudo apt-get install -y shellcheck docker-compose
+      run: sudo apt-get install -y shellcheck
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
         python-version: '3.10'
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
     - name: Install flake8
       run: python -m pip install flake8
     - name: Run shellcheck
       run: find postgres-appliance -name '*.sh' -print0 | xargs -0 shellcheck
     - name: Run flake8
       run: find postgres-appliance -name '*.py' -print0 | xargs -0 python -m flake8
+
+  tests:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Set up packages
+      run: sudo apt-get install -y docker-compose
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
     - name: Build spilo docker image
       uses: docker/build-push-action@v7
       with:
         context: postgres-appliance/
         load: true
         tags: spilo
-        cache-from: type=gha,scope=tests-spilo
-        cache-to: type=gha,scope=tests-spilo,mode=max
+        cache-from: type=gha,scope=spilo-build
+        cache-to: type=gha,scope=spilo-build,mode=max
     - name: Build Supabase-default docker image
       uses: docker/build-push-action@v7
       with:
@@ -52,9 +64,9 @@ jobs:
         build-args: |
           ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
         cache-from: |
-          type=gha,scope=tests-spilo
-          type=gha,scope=tests-spilo-supabase
-        cache-to: type=gha,scope=tests-spilo-supabase,mode=max
+          type=gha,scope=spilo-build
+          type=gha,scope=spilo-supabase-build
+        cache-to: type=gha,scope=spilo-supabase-build,mode=max
     - name: Smoke test Supabase-default docker image metadata
       run: |
         docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' spilo-supabase | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'

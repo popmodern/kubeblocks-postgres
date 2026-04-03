@@ -10,6 +10,10 @@ on:
     tags:
       - '*'
 
+concurrency:
+  group: publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -78,8 +82,8 @@ jobs:
         context: "postgres-appliance/"
         load: true
         tags: ${{ steps.image.outputs.NAME }}
-        cache-from: type=gha,scope=publish-spilo
-        cache-to: type=gha,scope=publish-spilo,mode=max
+        cache-from: type=gha,scope=spilo-build
+        cache-to: type=gha,scope=spilo-build,mode=max
 
     - name: Build and export Supabase-default image for smoke testing
       uses: docker/build-push-action@v7
@@ -90,9 +94,9 @@ jobs:
         build-args: |
           ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
         cache-from: |
-          type=gha,scope=publish-spilo
-          type=gha,scope=publish-spilo-supabase
-        cache-to: type=gha,scope=publish-spilo-supabase,mode=max
+          type=gha,scope=spilo-build
+          type=gha,scope=spilo-supabase-build
+        cache-to: type=gha,scope=spilo-supabase-build,mode=max
 
     - name: Smoke test Supabase-default image metadata
       run: |
@@ -117,8 +121,8 @@ jobs:
         push: true
         tags: "${{ steps.image.outputs.NAME }}"
         platforms: linux/amd64,linux/arm64
-        cache-from: type=gha,scope=publish-spilo
-        cache-to: type=gha,scope=publish-spilo,mode=max
+        cache-from: type=gha,scope=spilo-build
+        cache-to: type=gha,scope=spilo-build,mode=max
 
     - name: Build arm64 additionaly and push Supabase-default multiarch image to ghcr
       uses: docker/build-push-action@v7
@@ -130,6 +134,6 @@ jobs:
         build-args: |
           ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
         cache-from: |
-          type=gha,scope=publish-spilo
-          type=gha,scope=publish-spilo-supabase
-        cache-to: type=gha,scope=publish-spilo-supabase,mode=max
+          type=gha,scope=spilo-build
+          type=gha,scope=spilo-supabase-build
+        cache-to: type=gha,scope=spilo-supabase-build,mode=max
