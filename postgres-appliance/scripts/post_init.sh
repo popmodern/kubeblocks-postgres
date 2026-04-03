@@ -4,28 +4,57 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 export PGOPTIONS="-c synchronous_commit=local -c search_path=pg_catalog"
 
+SUPABASE_EXTENSIONS_FLAG_FILE=/run/supabase-extensions-enabled
+SUPABASE_INIT_FLAG_FILE=/run/supabase-init-enabled
+
+flag_file_enabled() {
+    [ -r "$1" ] && [ "$(tr -d '[:space:]' < "$1" 2> /dev/null)" = "true" ]
+}
+
+flag_file_status() {
+    if flag_file_enabled "$1"; then
+        echo present
+    else
+        echo absent
+    fi
+}
+
 log_supabase_post_init() {
-    echo "Supabase post-init: db=$2 pgver=$PGVER extensions=${SUPABASE_EXTENSIONS_ENABLED} init=${SUPABASE_INIT_ENABLED} - $1"
+    echo "Supabase post-init: db=$2 pgver=$PGVER extensions=${SUPABASE_EXTENSIONS_ENABLED}(${SUPABASE_EXTENSIONS_SOURCE}) init=${SUPABASE_INIT_ENABLED}(${SUPABASE_INIT_SOURCE}) wal_level=${SUPABASE_WAL_LEVEL:-unknown} key_script=${SUPABASE_PGSODIUM_GETKEY_SCRIPT:-unset} - $1"
 }
 
 PGVER=$(psql -d "$2" -XtAc "SELECT pg_catalog.current_setting('server_version_num')::int/10000")
-SUPABASE_EXTENSIONS_ENABLED=${ENABLE_SUPABASE_EXTENSIONS:-}
-SUPABASE_INIT_ENABLED=${ENABLE_SUPABASE_INIT:-}
+SUPABASE_EXTENSIONS_ENV=${ENABLE_SUPABASE_EXTENSIONS:-}
+SUPABASE_INIT_ENV=${ENABLE_SUPABASE_INIT:-}
+SUPABASE_PGSODIUM_GETKEY_SCRIPT=$(psql -d "$2" -XtAc "SELECT current_setting('pgsodium.getkey_script', true)")
+SUPABASE_WAL_LEVEL=$(psql -d "$2" -XtAc "SHOW wal_level")
 
-if [ -z "$SUPABASE_EXTENSIONS_ENABLED" ]; then
-    if [ "$(psql -d "$2" -XtAc "SELECT current_setting('pgsodium.getkey_script', true)")" = "/scripts/pgsodium_getkey.sh" ]; then
-        SUPABASE_EXTENSIONS_ENABLED=true
-    else
-        SUPABASE_EXTENSIONS_ENABLED=false
-    fi
+if [ -n "$SUPABASE_EXTENSIONS_ENV" ]; then
+    SUPABASE_EXTENSIONS_ENABLED=$SUPABASE_EXTENSIONS_ENV
+    SUPABASE_EXTENSIONS_SOURCE=env
+elif flag_file_enabled "$SUPABASE_EXTENSIONS_FLAG_FILE"; then
+    SUPABASE_EXTENSIONS_ENABLED=true
+    SUPABASE_EXTENSIONS_SOURCE=flag-file
+elif [ "$SUPABASE_PGSODIUM_GETKEY_SCRIPT" = "/scripts/pgsodium_getkey.sh" ]; then
+    SUPABASE_EXTENSIONS_ENABLED=true
+    SUPABASE_EXTENSIONS_SOURCE=inferred
+else
+    SUPABASE_EXTENSIONS_ENABLED=false
+    SUPABASE_EXTENSIONS_SOURCE=inferred
 fi
 
-if [ -z "$SUPABASE_INIT_ENABLED" ]; then
-    if [ "$SUPABASE_EXTENSIONS_ENABLED" = "true" ] && [ "$(psql -d "$2" -XtAc "SHOW wal_level")" = "logical" ]; then
-        SUPABASE_INIT_ENABLED=true
-    else
-        SUPABASE_INIT_ENABLED=false
-    fi
+if [ -n "$SUPABASE_INIT_ENV" ]; then
+    SUPABASE_INIT_ENABLED=$SUPABASE_INIT_ENV
+    SUPABASE_INIT_SOURCE=env
+elif flag_file_enabled "$SUPABASE_INIT_FLAG_FILE"; then
+    SUPABASE_INIT_ENABLED=true
+    SUPABASE_INIT_SOURCE=flag-file
+elif [ "$SUPABASE_EXTENSIONS_ENABLED" = "true" ] && [ "$SUPABASE_WAL_LEVEL" = "logical" ]; then
+    SUPABASE_INIT_ENABLED=true
+    SUPABASE_INIT_SOURCE=inferred
+else
+    SUPABASE_INIT_ENABLED=false
+    SUPABASE_INIT_SOURCE=inferred
 fi
 
 if [ "$PGVER" -lt 17 ]; then
@@ -35,6 +64,13 @@ else
 fi
 
 log_supabase_post_init "resolved bootstrap settings" "$2"
+echo "Supabase post-init: db=$2 env_extensions=${SUPABASE_EXTENSIONS_ENV:-unset} env_init=${SUPABASE_INIT_ENV:-unset} flag_extensions=$(flag_file_status "$SUPABASE_EXTENSIONS_FLAG_FILE") flag_init=$(flag_file_status "$SUPABASE_INIT_FLAG_FILE") wal_level=${SUPABASE_WAL_LEVEL:-unknown} key_script=${SUPABASE_PGSODIUM_GETKEY_SCRIPT:-unset} - bootstrap inputs"
+
+if [ "$SUPABASE_INIT_ENABLED" = "true" ] && [ "$SUPABASE_WAL_LEVEL" != "logical" ]; then
+    echo "ERROR: Supabase bootstrap requires wal_level=logical, got ${SUPABASE_WAL_LEVEL}" >&2
+    exit 1
+fi
+
 log_supabase_post_init "starting base post-init SQL" "$2"
 
 (echo "\set ON_ERROR_STOP on"

@@ -1117,6 +1117,15 @@ def write_pgbouncer_configuration(placeholders, overwrite):
     link_runit_service(placeholders, 'pgbouncer')
 
 
+def user_postgresql_parameter(config, parameter_name):
+    top_level_parameters = config.get('postgresql', {}).get('parameters', {})
+    if parameter_name in top_level_parameters:
+        return top_level_parameters[parameter_name]
+
+    bootstrap_parameters = config.get('bootstrap', {}).get('dcs', {}).get('postgresql', {}).get('parameters', {})
+    return bootstrap_parameters.get(parameter_name)
+
+
 def main():
     debug = os.environ.get('DEBUG', '') in ['1', 'true', 'TRUE', 'on', 'ON']
     args = parse_args()
@@ -1169,11 +1178,12 @@ def main():
         config['postgresql']['parameters']['extwlist.extensions'] =\
                 append_extensions(config['postgresql']['parameters']['extwlist.extensions'], version, True)
     if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true' and \
-            'pgsodium.getkey_script' not in user_config.get('postgresql', {}).get('parameters', {}):
+            user_postgresql_parameter(user_config, 'pgsodium.getkey_script') is None:
         config['postgresql']['parameters']['pgsodium.getkey_script'] = '/scripts/pgsodium_getkey.sh'
 
     if os.environ.get('ENABLE_SUPABASE_INIT') == 'true' and \
-            'wal_level' not in user_config.get('postgresql', {}).get('parameters', {}):
+            user_postgresql_parameter(user_config, 'wal_level') is None:
+        config['bootstrap']['dcs']['postgresql']['parameters']['wal_level'] = 'logical'
         config['postgresql']['parameters']['wal_level'] = 'logical'
 
     # Ensure replication is available

@@ -31,6 +31,20 @@ if [ "$(id -u)" -ne 0 ]; then
     rm "$RW_DIR/tmp/passwd"
 fi
 
+# Patroni post_init may not inherit the original container env reliably.
+# Persist explicit Supabase bootstrap intent into the writable runtime dir.
+SUPABASE_EXTENSIONS_FLAG_FILE="$RW_DIR/supabase-extensions-enabled"
+SUPABASE_INIT_FLAG_FILE="$RW_DIR/supabase-init-enabled"
+rm -f "$SUPABASE_EXTENSIONS_FLAG_FILE" "$SUPABASE_INIT_FLAG_FILE"
+
+if [ "${ENABLE_SUPABASE_EXTENSIONS:-}" = "true" ]; then
+    printf 'true\n' > "$SUPABASE_EXTENSIONS_FLAG_FILE"
+fi
+
+if [ "${ENABLE_SUPABASE_INIT:-}" = "true" ]; then
+    printf 'true\n' > "$SUPABASE_INIT_FLAG_FILE"
+fi
+
 if [ -n "${PGSODIUM_KEY:-}" ] && [ -z "${PGSODIUM_KEY_FILE:-}" ]; then
     old_umask=$(umask)
     PGSODIUM_KEY_FILE="$RW_DIR/tmp/pgsodium-root.key"

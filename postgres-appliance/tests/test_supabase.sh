@@ -7,7 +7,6 @@ source ./test_utils.sh
 
 readonly PREFIX="demo-"
 readonly SUPABASE_TIMEOUT=300
-readonly SUPABASE_BUNDLE_MARKER="20260211120934_supabase_privileged_role"
 readonly SUPABASE_PROGRESS_INTERVAL=10
 
 function cleanup() {
@@ -78,6 +77,20 @@ function query_true() {
     [ "$ret" = "t" ]
 }
 
+function supabase_bundle_latest_version() {
+    docker_exec "$1" "latest=\$(find /usr/share/supabase/postgres/migrations/db/migrations -maxdepth 1 -type f -name '*.sql' | LC_ALL=C sort | tail -n 1); if [ -n \"\$latest\" ]; then basename \"\$latest\" .sql; fi" 2> /dev/null || true
+}
+
+function supabase_bundle_marker_applied() {
+    local container=$1
+    local latest_version
+
+    latest_version=$(supabase_bundle_latest_version "$container")
+    [ -n "$latest_version" ] || return 1
+
+    query_true "$container" "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '${latest_version}')"
+}
+
 function wait_for_condition() {
     local container=$1
     local description=$2
@@ -113,19 +126,27 @@ function report_supabase_progress() {
     local custom_table_ready
     local custom_rows
     local event_trigger_count
+    local wal_level
+    local key_script
+    local latest_bundle_version
+    local latest_applied_version
     local recent_stage_logs
 
     role_ready=$(query_true "$container" "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin')" && echo yes || echo no)
     schema_table_ready=$(query_true "$container" "SELECT to_regclass('public.schema_migrations') IS NOT NULL" && echo yes || echo no)
-    bundle_marker_ready=$(query_true "$container" "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '${SUPABASE_BUNDLE_MARKER}')" && echo yes || echo no)
+    bundle_marker_ready=$(supabase_bundle_marker_applied "$container" && echo yes || echo no)
     publication_ready=$(query_true "$container" "SELECT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime')" && echo yes || echo no)
     custom_table_ready=$(query_true "$container" "SELECT to_regclass('public.spilo_supabase_custom_migrations') IS NOT NULL" && echo yes || echo no)
     custom_rows=$(docker_exec "$container" "psql -U postgres -d postgres -tAc \"SELECT CASE WHEN to_regclass('public.spilo_supabase_custom_migrations') IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM public.spilo_supabase_custom_migrations) END\"" 2> /dev/null || true)
     event_trigger_count=$(docker_exec "$container" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_event_trigger WHERE evtname IN ('issue_pg_graphql_access','issue_pg_net_access','issue_pg_cron_access')\"" 2> /dev/null || true)
+    wal_level=$(docker_exec "$container" "psql -U postgres -d postgres -tAc \"SHOW wal_level\"" 2> /dev/null || true)
+    key_script=$(docker_exec "$container" "psql -U postgres -d postgres -tAc \"SELECT current_setting('pgsodium.getkey_script', true)\"" 2> /dev/null || true)
+    latest_bundle_version=$(supabase_bundle_latest_version "$container")
+    latest_applied_version=$(docker_exec "$container" "psql -U postgres -d postgres -tAc \"SELECT CASE WHEN to_regclass('public.schema_migrations') IS NULL THEN '' ELSE COALESCE((SELECT MAX(version) FROM public.schema_migrations), '') END\"" 2> /dev/null || true)
     recent_stage_logs=$(docker logs --tail 80 "$container" 2>&1 | grep -E 'Supabase post-init:|Supabase migrations:' | tail -n 6 || true)
 
     log_info "[progress] ${container} waiting for ${description} (${elapsed}s elapsed)"
-    log_info "[progress] role=${role_ready} schema_migrations=${schema_table_ready} bundle_marker=${bundle_marker_ready} publication=${publication_ready} custom_table=${custom_table_ready} custom_rows=${custom_rows:-unknown} event_triggers=${event_trigger_count:-unknown}"
+    log_info "[progress] role=${role_ready} schema_migrations=${schema_table_ready} bundle_marker=${bundle_marker_ready} publication=${publication_ready} wal_level=${wal_level:-unknown} key_script=${key_script:-unset} bundle_latest=${latest_bundle_version:-unknown} applied_latest=${latest_applied_version:-none} custom_table=${custom_table_ready} custom_rows=${custom_rows:-unknown} event_triggers=${event_trigger_count:-unknown}"
     if [[ -n "$recent_stage_logs" ]]; then
         printf '%s\n' "$recent_stage_logs"
     else
@@ -137,7 +158,7 @@ function supabase_bundle_ready() {
     local container=$1
 
     query_true "$container" "SELECT to_regclass('public.schema_migrations') IS NOT NULL" &&
-    query_true "$container" "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '${SUPABASE_BUNDLE_MARKER}')" &&
+    supabase_bundle_marker_applied "$container" &&
     query_true "$container" "SELECT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime')"
 }
 
@@ -270,7 +291,8 @@ function verify_supabase_pgbouncer_auth() {
 
 function verify_supabase_migration_marker() {
     local applied
-    applied=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '${SUPABASE_BUNDLE_MARKER}')\"")
+
+    applied=$(supabase_bundle_marker_applied "$1" && echo t || echo f)
     [ "$applied" = "t" ]
 }
 
