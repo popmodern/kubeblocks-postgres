@@ -33,6 +33,10 @@ TARGET_DB=${1:-postgres}
 SUPABASE_ROOT=/usr/share/supabase/postgres
 INIT_SCRIPTS_DIR=${SUPABASE_ROOT}/migrations/db/init-scripts
 MIGRATIONS_DIR=${SUPABASE_ROOT}/migrations/db/migrations
+INIT_SCRIPTS_MANIFEST=${INIT_SCRIPTS_DIR}.manifest
+MIGRATIONS_MANIFEST=${MIGRATIONS_DIR}.manifest
+INIT_SCRIPTS_BUNDLE=${INIT_SCRIPTS_DIR}.bundle.sql
+MIGRATIONS_BUNDLE=${MIGRATIONS_DIR}.bundle.sql
 CUSTOM_MIGRATIONS_DIR=${SUPABASE_CUSTOM_MIGRATIONS_DIR:-/etc/postgresql.schema.d}
 CUSTOM_MIGRATION_FILE=${SUPABASE_CUSTOM_MIGRATION_FILE:-/etc/postgresql.schema.sql}
 CURRENT_STAGE=initialization
@@ -71,6 +75,12 @@ require_sql_dir() {
 
 sql_files() {
     local dir_path=$1
+    local manifest_path="${dir_path}.manifest"
+
+    if [ -f "$manifest_path" ]; then
+        cat "$manifest_path"
+        return 0
+    fi
 
     find "$dir_path" -maxdepth 1 -type f -name '*.sql' | LC_ALL=C sort
 }
@@ -214,6 +224,7 @@ bootstrap_superuser_name() {
 
 ensure_upstream_supabase_role_layout() {
     local bootstrap_role
+    local swap_role=spilo_supabase_role_swapper
 
     bootstrap_role=$(bootstrap_superuser_name)
     case "$bootstrap_role" in
@@ -232,11 +243,26 @@ ensure_upstream_supabase_role_layout() {
             ;;
     esac
 
-    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<'SQL'
+    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<SQL
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${swap_role}') THEN
+        EXECUTE 'CREATE ROLE ${swap_role} WITH LOGIN SUPERUSER';
+    ELSE
+        EXECUTE 'ALTER ROLE ${swap_role} WITH LOGIN SUPERUSER';
+    END IF;
+END
+\$\$;
+SQL
+
+    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" <<SQL
+SET SESSION AUTHORIZATION ${swap_role};
 ALTER ROLE postgres RENAME TO supabase_admin__bootstrap_tmp;
 ALTER ROLE supabase_admin RENAME TO postgres;
 ALTER ROLE supabase_admin__bootstrap_tmp RENAME TO supabase_admin;
 ALTER DATABASE postgres OWNER TO postgres;
+RESET SESSION AUTHORIZATION;
+DROP ROLE IF EXISTS ${swap_role};
 SQL
 }
 
@@ -338,10 +364,40 @@ COMMIT;
 SQL
 }
 
+bundle_script_for_dir() {
+    local dir_path=$1
+
+    case "$dir_path" in
+        "$INIT_SCRIPTS_DIR")
+            printf '%s' "$INIT_SCRIPTS_BUNDLE"
+            ;;
+        "$MIGRATIONS_DIR")
+            printf '%s' "$MIGRATIONS_BUNDLE"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+run_tracked_bundle_script() {
+    local dir_path=$1
+    local bundle_script
+
+    bundle_script=$(bundle_script_for_dir "$dir_path") || return 1
+    [ -f "$bundle_script" ] || return 1
+
+    psql -v ON_ERROR_STOP=1 -X -d "$TARGET_DB" -f "$bundle_script"
+}
+
 run_sql_dir_as_role() {
     local role_name=$1
     local dir_path=$2
     local sql_file
+
+    if run_tracked_bundle_script "$dir_path"; then
+        return 0
+    fi
 
     while IFS= read -r sql_file; do
         run_tracked_sql_file "$role_name" "$sql_file"

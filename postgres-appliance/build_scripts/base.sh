@@ -160,6 +160,41 @@ fetch_github_repo_at_commit() {
     find "$dest_dir" -name .git -prune -exec rm -rf {} +
 }
 
+write_supabase_sql_manifest() {
+    local dir_path="$1"
+    local manifest_path="${dir_path}.manifest"
+
+    find "$dir_path" -maxdepth 1 -type f -name '*.sql' | LC_ALL=C sort > "$manifest_path"
+}
+
+write_supabase_bundle_script() {
+    local role_name="$1"
+    local dir_path="$2"
+    local bundle_path="${dir_path}.bundle.sql"
+    local manifest_path="${dir_path}.manifest"
+    local sql_file
+    local version_name
+
+    {
+        printf '\\set ON_ERROR_STOP on\n'
+        while IFS= read -r sql_file; do
+            [ -n "$sql_file" ] || continue
+            version_name=$(basename "$sql_file" .sql)
+            printf '\\echo Running Supabase migration %s as %s\n' "$version_name" "$role_name"
+            printf "SELECT CASE WHEN EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '%s') THEN 'true' ELSE 'false' END AS already_applied \\\\gset\n" "$version_name"
+            printf '\\if :already_applied\n'
+            printf '\\echo Skipping Supabase migration %s; already recorded in public.schema_migrations\n' "$version_name"
+            printf '\\else\n'
+            printf 'BEGIN;\n'
+            printf 'SET LOCAL ROLE %s;\n' "$role_name"
+            printf '\\i %s\n' "$sql_file"
+            printf "INSERT INTO public.schema_migrations(version) VALUES ('%s');\n" "$version_name"
+            printf 'COMMIT;\n'
+            printf '\\endif\n\n'
+        done < "$manifest_path"
+    } > "$bundle_path"
+}
+
 extension_supports_version() {
     local ext_name="$1"
     local version="$2"
@@ -284,6 +319,10 @@ fetch_github_repo_at_commit "supabase/postgres" "$SUPABASE_POSTGRES_COMMIT" "sup
 
 install -d /usr/share/supabase/postgres/migrations
 cp -r "supabase-postgres-${SUPABASE_POSTGRES_COMMIT}/migrations/db" /usr/share/supabase/postgres/migrations/
+write_supabase_sql_manifest /usr/share/supabase/postgres/migrations/db/init-scripts
+write_supabase_sql_manifest /usr/share/supabase/postgres/migrations/db/migrations
+write_supabase_bundle_script postgres /usr/share/supabase/postgres/migrations/db/init-scripts
+write_supabase_bundle_script supabase_admin /usr/share/supabase/postgres/migrations/db/migrations
 
 # Add Groonga apt repository for pgroonga
 if [ "$DEMO" != "true" ]; then
