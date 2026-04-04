@@ -275,12 +275,9 @@ jobs:
           - source: docker.io/apecloud/spilo-init:0.2
             target_repo: spilo-init
             target_tag: "0.2"
-          - source: docker.io/apecloud/pgbouncer:1.19.0
-            target_repo: pgbouncer
-            target_tag: "1.19.0"
-          - source: docker.io/apecloud/postgres-exporter:v0.15.0
-            target_repo: postgres-exporter
-            target_tag: v0.15.0
+          - source: docker.io/apecloud/wal-g-pg:3.0.0
+            target_repo: wal-g-pg
+            target_tag: "3.0.0"
           - source: docker.io/apecloud/dbctl:0.2.0
             target_repo: dbctl
             target_tag: "0.2.0"
