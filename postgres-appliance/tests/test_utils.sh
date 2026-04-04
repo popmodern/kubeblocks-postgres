@@ -40,12 +40,26 @@ function next_hour() {
     date -d '1 hour' -u +'%F %T UTC' 2>/dev/null || date -v+1H -u +'%F %T UTC'
 }
 
+function docker_compose() {
+    if command -v docker-compose &> /dev/null; then
+        docker-compose "$@"
+    elif docker compose version &> /dev/null; then
+        docker compose "$@"
+    elif command -v podman-compose &> /dev/null; then
+        podman-compose "$@"
+    elif podman compose version &> /dev/null; then
+        podman compose "$@"
+    else
+        log_error "docker compose/docker-compose: command not found"
+    fi
+}
+
 function start_containers() {
-    docker-compose up -d "$@"
+    docker_compose up -d "$@"
 }
 
 function stop_containers() {
-    docker-compose rm -fs
+    docker_compose rm -fs
 }
 
 function rm_container() {

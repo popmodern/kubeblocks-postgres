@@ -172,7 +172,7 @@ function start_detached_test_container() {
     shift
     local container_name
 
-    if ! container_name=$(docker-compose run "$@"); then
+    if ! container_name=$(docker_compose run "$@"); then
         log_error "$error_message"
     fi
 
