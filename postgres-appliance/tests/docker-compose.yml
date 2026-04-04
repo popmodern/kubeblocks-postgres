@@ -87,7 +87,7 @@ services:
             ENABLE_SUPABASE_EXTENSIONS: 'true'
             ENABLE_SUPABASE_INIT: 'true'
             PGSODIUM_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
-            PGVERSION: '17'
+            PGVERSION: ${SUPABASE_MODERN_PGVERSION:-17}
         hostname: supabase
         container_name: demo-supabase
 
@@ -109,7 +109,7 @@ services:
             ENABLE_SUPABASE_EXTENSIONS: 'true'
             ENABLE_SUPABASE_INIT: 'true'
             PGSODIUM_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
-            PGVERSION: '17'
+            PGVERSION: ${SUPABASE_MODERN_PGVERSION:-17}
         hostname: supabase-custom
         container_name: demo-supabase-custom
         volumes:
