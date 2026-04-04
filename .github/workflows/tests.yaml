@@ -44,27 +44,27 @@ jobs:
           set -euo pipefail
 
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            cat >> "$GITHUB_OUTPUT" <<'EOF'
-              matrix={"include":[
-                {"pg_major":"17","flavor":"base"},
-                {"pg_major":"17","flavor":"supabase"},
-                {"pg_major":"17","flavor":"supabase-auto-init"}
-              ]}
-            EOF
+            {
+              echo 'matrix={"include":['
+              echo '  {"pg_major":"17","flavor":"base"},'
+              echo '  {"pg_major":"17","flavor":"supabase"},'
+              echo '  {"pg_major":"17","flavor":"supabase-auto-init"}'
+              echo ']}'
+            } >> "$GITHUB_OUTPUT"
           else
-            cat >> "$GITHUB_OUTPUT" <<'EOF'
-              matrix={"include":[
-                {"pg_major":"15","flavor":"base"},
-                {"pg_major":"15","flavor":"supabase"},
-                {"pg_major":"15","flavor":"supabase-auto-init"},
-                {"pg_major":"16","flavor":"base"},
-                {"pg_major":"16","flavor":"supabase"},
-                {"pg_major":"16","flavor":"supabase-auto-init"},
-                {"pg_major":"17","flavor":"base"},
-                {"pg_major":"17","flavor":"supabase"},
-                {"pg_major":"17","flavor":"supabase-auto-init"}
-              ]}
-            EOF
+            {
+              echo 'matrix={"include":['
+              echo '  {"pg_major":"15","flavor":"base"},'
+              echo '  {"pg_major":"15","flavor":"supabase"},'
+              echo '  {"pg_major":"15","flavor":"supabase-auto-init"},'
+              echo '  {"pg_major":"16","flavor":"base"},'
+              echo '  {"pg_major":"16","flavor":"supabase"},'
+              echo '  {"pg_major":"16","flavor":"supabase-auto-init"},'
+              echo '  {"pg_major":"17","flavor":"base"},'
+              echo '  {"pg_major":"17","flavor":"supabase"},'
+              echo '  {"pg_major":"17","flavor":"supabase-auto-init"}'
+              echo ']}'
+            } >> "$GITHUB_OUTPUT"
           fi
 
   lint-shell:
