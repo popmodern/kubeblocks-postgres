@@ -123,6 +123,8 @@ jobs:
 
       - name: Create Kind Cluster
         uses: helm/kind-action@v1
+        with:
+          cluster_name: kind
 
       - name: Load built image into Kind
         run: kind load docker-image "${{ steps.vars.outputs.local_image_ref }}"
