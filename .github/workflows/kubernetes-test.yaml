@@ -5,9 +5,9 @@ on:
     paths:
       - "kubernetes/**"
       - "postgres-appliance/**"
-      - ".github/workflows/tests.yml"
-      - ".github/workflows/publish-ghcr-container.yml"
-      - ".github/workflows/kubernetes-test.yml"
+      - ".github/workflows/tests.yaml"
+      - ".github/workflows/publish-ghcr-container.yaml"
+      - ".github/workflows/kubernetes-test.yaml"
   push:
     branches:
       - trigger
@@ -15,9 +15,9 @@ on:
     paths:
       - "kubernetes/**"
       - "postgres-appliance/**"
-      - ".github/workflows/tests.yml"
-      - ".github/workflows/publish-ghcr-container.yml"
-      - ".github/workflows/kubernetes-test.yml"
+      - ".github/workflows/tests.yaml"
+      - ".github/workflows/publish-ghcr-container.yaml"
+      - ".github/workflows/kubernetes-test.yaml"
   workflow_dispatch:
 
 concurrency:
