@@ -384,6 +384,14 @@ function verify_hourly_log_rotation() {
 function test_spilo() {
     # TEST SUITE 1
     local container=$1
+    local max_supported_pg_major=$2
+    local supports_pg17=false
+
+    if [[ "$max_supported_pg_major" -ge 17 ]]; then
+        supports_pg17=true
+    fi
+
+    log_info "Detected PostgreSQL majors up to ${max_supported_pg_major} in the test image"
 
     run_test test_envdir_suffix "$container" 14
     run_test verify_default_preload_libraries "$container"
@@ -407,8 +415,12 @@ function test_spilo() {
 
     # TEST SUITE 2
     local upgrade3_container
-    upgrade3_container=$(start_clone_with_walg_upgrade_to_17_container) # SCOPE=upgrade3 PGVERSION=17 CLONE: _SCOPE=demo _PGVERSION=14 _TARGET_TIME=<next_min>
-    log_info "[TS2] Started $upgrade3_container for testing major upgrade 14->17 after clone with wal-g"
+    if [ "$supports_pg17" = true ]; then
+        upgrade3_container=$(start_clone_with_walg_upgrade_to_17_container) # SCOPE=upgrade3 PGVERSION=17 CLONE: _SCOPE=demo _PGVERSION=14 _TARGET_TIME=<next_min>
+        log_info "[TS2] Started $upgrade3_container for testing major upgrade 14->17 after clone with wal-g"
+    else
+        log_info "[TS2] Skipping PG17 clone-upgrade coverage; test image supports up to PostgreSQL ${max_supported_pg_major}"
+    fi
 
 
     # TEST SUITE 4
@@ -419,7 +431,9 @@ function test_spilo() {
 
     # TEST SUITE 1
     # wait clone to finish and prevent timescale installation gets cloned
-    find_leader "$upgrade3_container"
+    if [ "$supports_pg17" = true ]; then
+        find_leader "$upgrade3_container"
+    fi
     find_leader "$upgrade_container"
     create_timescaledb "$container" # we don't install it at the beginning, as we do 14->17 in a clone
 
@@ -430,17 +444,21 @@ function test_spilo() {
     run_test test_envdir_updated_to_x 15
 
     # TEST SUITE 2
-    log_info "[TS2] Testing in-place major upgrade 14->17 after wal-g clone"
-    run_test verify_clone_upgrade "$upgrade3_container" "wal-g" 14 17
+    if [ "$supports_pg17" = true ]; then
+        log_info "[TS2] Testing in-place major upgrade 14->17 after wal-g clone"
+        run_test verify_clone_upgrade "$upgrade3_container" "wal-g" 14 17
 
-    run_test verify_archive_mode_is_on "$upgrade3_container"
-    wait_backup "$upgrade3_container"
+        run_test verify_archive_mode_is_on "$upgrade3_container"
+        wait_backup "$upgrade3_container"
+    fi
 
 
     # TEST SUITE 3
     local clone17_container
-    clone17_container=$(start_clone_with_walg_17_container) # SCOPE=clone17 CLONE: _SCOPE=upgrade3 _PGVERSION=17 _TARGET_TIME=<next_hour>
-    log_info "[TS3] Started $clone17_container for testing point-in-time recovery (clone with wal-g) with unreachable target on 15+"
+    if [ "$supports_pg17" = true ]; then
+        clone17_container=$(start_clone_with_walg_17_container) # SCOPE=clone17 CLONE: _SCOPE=upgrade3 _PGVERSION=17 _TARGET_TIME=<next_hour>
+        log_info "[TS3] Started $clone17_container for testing point-in-time recovery (clone with wal-g) with unreachable target on 15+"
+    fi
 
 
     # TEST SUITE 1
@@ -451,17 +469,23 @@ function test_spilo() {
 
 
     # TEST SUITE 3
-    find_leader "$clone17_container"
-    run_test verify_archive_mode_is_on "$clone17_container"
+    if [ "$supports_pg17" = true ]; then
+        find_leader "$clone17_container"
+        run_test verify_archive_mode_is_on "$clone17_container"
+    fi
 
 
     # TEST SUITE 1
     wait_backup "$container"
 
-    log_info "[TS1] Testing in-place major upgrade to 16->17"
-    run_test test_successful_inplace_upgrade_to_17 "$container"
-    wait_all_streaming "$container"
-    run_test test_envdir_updated_to_x 17
+    if [ "$supports_pg17" = true ]; then
+        log_info "[TS1] Testing in-place major upgrade to 16->17"
+        run_test test_successful_inplace_upgrade_to_17 "$container"
+        wait_all_streaming "$container"
+        run_test test_envdir_updated_to_x 17
+    else
+        log_info "[TS1] Skipping in-place upgrade 16->17; test image supports up to PostgreSQL ${max_supported_pg_major}"
+    fi
 
 
     # TEST SUITE 4
@@ -491,8 +515,10 @@ function test_spilo() {
 
     # TEST SUITE 7
     local hourlylogs_container
-    hourlylogs_container=$(start_clone_with_hourly_log_rotation "$upgrade_container")
-    log_info "[TS7] Started $hourlylogs_container for testing hourly log rotation"
+    if [ "$supports_pg17" = true ]; then
+        hourlylogs_container=$(start_clone_with_hourly_log_rotation "$upgrade_container")
+        log_info "[TS7] Started $hourlylogs_container for testing hourly log rotation"
+    fi
 
     # TEST SUITE 6
     log_info "[TS6] Testing in-place major upgrade 15->16 after clone with basebackup"
@@ -500,9 +526,11 @@ function test_spilo() {
     run_test verify_archive_mode_is_on "$basebackup_container"
 
     # TEST SUITE 7
-    find_leader "$hourlylogs_container"
-    log_info "[TS7] Testing correct setup with hourly log rotation"
-    run_test verify_hourly_log_rotation "$hourlylogs_container"
+    if [ "$supports_pg17" = true ]; then
+        find_leader "$hourlylogs_container"
+        log_info "[TS7] Testing correct setup with hourly log rotation"
+        run_test verify_hourly_log_rotation "$hourlylogs_container"
+    fi
 }
 
 function main() {
@@ -511,8 +539,13 @@ function main() {
 
     log_info "Waiting for leader..."
     local leader
+    local max_supported_pg_major
+    max_supported_pg_major=$(image_max_pg_major "${SPILO_TEST_IMAGE:-spilo}")
+    if [[ -z "$max_supported_pg_major" ]]; then
+        log_error "Failed to determine supported PostgreSQL majors for ${SPILO_TEST_IMAGE:-spilo}"
+    fi
     leader="$PREFIX$(find_leader "${PREFIX}spilo1")"
-    test_spilo "$leader"
+    test_spilo "$leader" "$max_supported_pg_major"
 }
 
 trap cleanup QUIT TERM EXIT

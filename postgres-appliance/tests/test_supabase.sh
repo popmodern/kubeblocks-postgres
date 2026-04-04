@@ -13,6 +13,21 @@ readonly PREFIX="demo-"
 readonly SUPABASE_TIMEOUT=300
 readonly SUPABASE_PROGRESS_INTERVAL=10
 
+resolve_supabase_modern_pgversion() {
+    local image_ref=${SPILO_SUPABASE_TEST_IMAGE:-${SPILO_TEST_IMAGE:-spilo-supabase}}
+    local max_pg_major
+
+    max_pg_major=$(image_max_pg_major "$image_ref")
+    if [[ -z "$max_pg_major" ]]; then
+        log_error "Failed to determine supported PostgreSQL majors for ${image_ref}"
+    fi
+    if [[ "$max_pg_major" -lt 15 ]]; then
+        log_error "Supabase tests require PostgreSQL 15 or newer, but image ${image_ref} supports up to ${max_pg_major}"
+    fi
+
+    printf '%s\n' "$max_pg_major"
+}
+
 function cleanup() {
     stop_containers
     local -a containers
@@ -456,6 +471,9 @@ function test_supabase_legacy_custom_sql() {
 
 function main() {
     cleanup
+    export SUPABASE_MODERN_PGVERSION
+    SUPABASE_MODERN_PGVERSION=$(resolve_supabase_modern_pgversion)
+    log_info "Using PostgreSQL ${SUPABASE_MODERN_PGVERSION} for modern Supabase test containers"
     start_containers etcd supabase supabase-custom supabase-legacy supabase-legacy-custom
 
     test_supabase_bootstrap "${PREFIX}supabase"

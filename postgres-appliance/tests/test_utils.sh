@@ -40,6 +40,17 @@ function next_hour() {
     date -d '1 hour' -u +'%F %T UTC' 2>/dev/null || date -v+1H -u +'%F %T UTC'
 }
 
+function image_max_pg_major() {
+    local image_ref=$1
+
+    docker run --rm --entrypoint /bin/sh "$image_ref" -ec '
+        find /usr/lib/postgresql -mindepth 1 -maxdepth 1 -type d -printf "%f\n" \
+            | grep -E "^[0-9]+$" \
+            | sort -n \
+            | tail -n 1
+    '
+}
+
 function docker_compose() {
     if command -v docker-compose &> /dev/null; then
         docker-compose "$@"

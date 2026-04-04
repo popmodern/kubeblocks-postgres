@@ -7,7 +7,7 @@ source ../test_utils.sh
 TEST_CONTAINER_NAME='spilo-test'
 TEST_IMAGE=(
     'registry.opensource.zalan.do/acid/spilo-cdp-14'
-    'spilo'
+    "${SPILO_TEST_IMAGE:-spilo}"
 )
 
 function main() {
