@@ -37,7 +37,7 @@ mkdir -p "$WAL_FAST"
 
 rm -fr "$DATA_DIR" "${WAL_FAST:?}"/*
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 function sigterm_handler() {
     kill -SIGTERM "$receivewal_pid" "$basebackup_pid"
     exit 143
