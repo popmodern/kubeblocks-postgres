@@ -66,6 +66,12 @@ fi
 log_supabase_post_init "resolved bootstrap settings" "$2"
 echo "Supabase post-init: db=$2 env_extensions=${SUPABASE_EXTENSIONS_ENV:-unset} env_init=${SUPABASE_INIT_ENV:-unset} flag_extensions=$(flag_file_status "$SUPABASE_EXTENSIONS_FLAG_FILE") flag_init=$(flag_file_status "$SUPABASE_INIT_FLAG_FILE") wal_level=${SUPABASE_WAL_LEVEL:-unknown} key_script=${SUPABASE_PGSODIUM_GETKEY_SCRIPT:-unset} - bootstrap inputs"
 
+if [ "$SUPABASE_INIT_ENABLED" = "true" ] && [ -z "$SUPABASE_PGSODIUM_GETKEY_SCRIPT" ]; then
+    echo "WARNING: Supabase bootstrap requested but no pgsodium root key source is configured. Skipping bootstrap; provide PGSODIUM_KEY, PGSODIUM_KEY_FILE, or pgsodium.getkey_script and rerun /scripts/run_supabase_migrations.sh $2 once the key is available." >&2
+    SUPABASE_INIT_ENABLED=false
+    SUPABASE_INIT_SOURCE='disabled-missing-pgsodium-key'
+fi
+
 if [ "$SUPABASE_INIT_ENABLED" = "true" ] && [ "$SUPABASE_WAL_LEVEL" != "logical" ]; then
     echo "ERROR: Supabase bootstrap requires wal_level=logical, got ${SUPABASE_WAL_LEVEL}" >&2
     exit 1

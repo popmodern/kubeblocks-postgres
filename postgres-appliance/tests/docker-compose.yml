@@ -91,6 +91,27 @@ services:
         hostname: supabase
         container_name: demo-supabase
 
+    supabase-no-key:
+        image: ${SPILO_SUPABASE_TEST_IMAGE:-spilo-supabase}
+        networks: [ demo ]
+        depends_on: [ minio ]
+        environment:
+            SPILO_PROVIDER: 'local'
+            AWS_ACCESS_KEY_ID: *access_key
+            AWS_SECRET_ACCESS_KEY: *secret_key
+            AWS_ENDPOINT: *aws_endpoint
+            AWS_S3_FORCE_PATH_STYLE: *aws_s3_force_path_style
+            WAL_S3_BUCKET: *bucket
+            WALG_DISABLE_S3_SSE: *walg_disable_s3_sse
+            ETCDCTL_ENDPOINTS: http://etcd:2379
+            ETCD3_HOST: "etcd:2379"
+            SCOPE: supabase-no-key
+            ENABLE_SUPABASE_EXTENSIONS: 'true'
+            ENABLE_SUPABASE_INIT: 'true'
+            PGVERSION: ${SUPABASE_MODERN_PGVERSION:-17}
+        hostname: supabase-no-key
+        container_name: demo-supabase-no-key
+
     supabase-custom:
         image: ${SPILO_SUPABASE_TEST_IMAGE:-spilo-supabase}
         networks: [ demo ]

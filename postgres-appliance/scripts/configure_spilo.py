@@ -78,6 +78,11 @@ def link_runit_service(placeholders, name):
         os.makedirs(os.path.join(placeholders['RW_DIR'], 'supervise', name))
 
 
+def supabase_pgsodium_key_configured():
+    return bool((os.environ.get('PGSODIUM_KEY_FILE') or '').strip()
+                or (os.environ.get('PGSODIUM_KEY') or '').strip())
+
+
 def write_certificates(environment, overwrite):
     """Write SSL certificate to files
 
@@ -1178,6 +1183,7 @@ def main():
         config['postgresql']['parameters']['extwlist.extensions'] =\
                 append_extensions(config['postgresql']['parameters']['extwlist.extensions'], version, True)
     if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true' and \
+            supabase_pgsodium_key_configured() and \
             user_postgresql_parameter(user_config, 'pgsodium.getkey_script') is None:
         config['postgresql']['parameters']['pgsodium.getkey_script'] = '/scripts/pgsodium_getkey.sh'
 
