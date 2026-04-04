@@ -1,14 +1,18 @@
-name: Publish multiarch images on ghcr.io
+name: Publish multiarch images on GHCR
+
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Tag to publish when running this workflow manually
+        description: Tag to publish manually
         required: true
         type: string
   push:
     tags:
-      - '*'
+      - "v*"
+      - "15*"
+      - "16*"
+      - "17*"
 
 concurrency:
   group: publish-${{ github.workflow }}-${{ github.ref }}
@@ -19,121 +23,347 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  publish:
-    name: Build and push Spilo multiarch images
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: 'read'
-      packages: 'write'
-    defaults:
-      run:
-        shell: bash
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      release_tag: ${{ steps.vars.outputs.release_tag }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@v6
+      - name: Derive release tag
+        id: vars
+        shell: bash
+        env:
+          MANUAL_IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
 
-    - name: Set up packages
-      run: sudo apt-get install -y docker-compose
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            RELEASE_TAG="${MANUAL_IMAGE_TAG}"
+          else
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          fi
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.10'
+          # Normalize accidental flavor suffixes away so the workflow always
+          # derives flavor tags consistently from one base release tag.
+          RELEASE_TAG="${RELEASE_TAG%-supabase}"
+          RELEASE_TAG="${RELEASE_TAG%-supabase-auto-init}"
 
-    - name: Derive spilo image name
-      id: image
-      working-directory: postgres-appliance
-      env:
-        MANUAL_IMAGE_TAG: ${{ inputs.image_tag }}
-      run: |
-        PGVERSION=$(sed -n 's/^ARG PGVERSION=\([1-9][0-9]*\).*$/\1/p' Dockerfile)
-        if [[ "${GITHUB_EVENT_NAME}" == 'workflow_dispatch' ]]; then
-          IMAGE_TAG="$MANUAL_IMAGE_TAG"
-        else
-          IMAGE_TAG="$GITHUB_REF_NAME"
-        fi
-        if [[ "$IMAGE_TAG" == *-supabase ]]; then
-          IMAGE_TAG="${IMAGE_TAG%-supabase}"
-        fi
-        if [[ -z "$IMAGE_TAG" ]]; then
-          echo "ERROR: derived image tag is empty" >&2
-          exit 1
-        fi
-        IMAGE_BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-$PGVERSION"
-        echo "NAME=${IMAGE_BASE}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
-        echo "SUPABASE_NAME=${IMAGE_BASE}:${IMAGE_TAG}-supabase" >> $GITHUB_OUTPUT
+          if [[ -z "${RELEASE_TAG}" ]]; then
+            echo "Derived release tag is empty" >&2
+            exit 1
+          fi
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v4
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
+  test:
+    name: Test PG${{ matrix.pg_major }} ${{ matrix.flavor }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_major: ["15", "16", "17"]
+        flavor: ["base", "supabase", "supabase-auto-init"]
 
-    - name: Login to GHCR
-      uses: docker/login-action@v4
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
-    - name: Build and export to local docker for testing
-      uses: docker/build-push-action@v7
-      with:
-        context: "postgres-appliance/"
-        load: true
-        tags: ${{ steps.image.outputs.NAME }}
-        cache-from: type=gha,scope=spilo-build
-        cache-to: type=gha,scope=spilo-build,mode=max
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v2
+        with:
+          version: latest
 
-    - name: Build and export Supabase-default image for smoke testing
-      uses: docker/build-push-action@v7
-      with:
-        context: "postgres-appliance/"
-        load: true
-        tags: ${{ steps.image.outputs.SUPABASE_NAME }}
-        build-args: |
-          ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
-        cache-from: |
-          type=gha,scope=spilo-build
-          type=gha,scope=spilo-supabase-build
-        cache-to: type=gha,scope=spilo-supabase-build,mode=max
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
 
-    - name: Smoke test Supabase-default image metadata
-      run: |
-        docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${{ steps.image.outputs.SUPABASE_NAME }}" | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'
-        docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${{ steps.image.outputs.SUPABASE_NAME }}" | grep '^ENABLE_SUPABASE_INIT=false$'
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
 
-    - name: Test container images
-      env:
-        SPILO_TEST_IMAGE: "${{ steps.image.outputs.NAME }}"
-      run: bash postgres-appliance/tests/test_spilo.sh
+      - name: Derive image variables
+        id: vars
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          PG_MAJOR: ${{ matrix.pg_major }}
+          FLAVOR: ${{ matrix.flavor }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
 
-    - name: Test Supabase bootstrap image
-      env:
-        SPILO_TEST_IMAGE: "${{ steps.image.outputs.SUPABASE_NAME }}"
-        SPILO_SUPABASE_TEST_IMAGE: "${{ steps.image.outputs.SUPABASE_NAME }}"
-      run: bash postgres-appliance/tests/test_supabase.sh
+          BASE_CACHE_SCOPE="spilo-${PG_MAJOR}-base"
 
-    - name: Build arm64 additionaly and push multiarch image to ghcr
-      uses: docker/build-push-action@v7
-      with:
-        context: "postgres-appliance/"
-        push: true
-        tags: "${{ steps.image.outputs.NAME }}"
-        platforms: linux/amd64,linux/arm64
-        cache-from: type=gha,scope=spilo-build
-        cache-to: type=gha,scope=spilo-build,mode=max
+          case "${FLAVOR}" in
+            base)
+              TAG_SUFFIX=""
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="false"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              TEST_KIND="base"
+              VARIANT_CACHE_SCOPE="${BASE_CACHE_SCOPE}"
+              ;;
+            supabase)
+              TAG_SUFFIX="-supabase"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              TEST_KIND="supabase"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase"
+              ;;
+            supabase-auto-init)
+              TAG_SUFFIX="-supabase-auto-init"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="true"
+              TEST_KIND="supabase"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-auto-init"
+              ;;
+            *)
+              echo "Unsupported flavor: ${FLAVOR}" >&2
+              exit 1
+              ;;
+          esac
 
-    - name: Build arm64 additionaly and push Supabase-default multiarch image to ghcr
-      uses: docker/build-push-action@v7
-      with:
-        context: "postgres-appliance/"
-        push: true
-        tags: "${{ steps.image.outputs.SUPABASE_NAME }}"
-        platforms: linux/amd64,linux/arm64
-        build-args: |
-          ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
-        cache-from: |
-          type=gha,scope=spilo-build
-          type=gha,scope=spilo-supabase-build
-        cache-to: type=gha,scope=spilo-supabase-build,mode=max
+          IMAGE_BASE="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}"
+          TAG_VALUE="${RELEASE_TAG}${TAG_SUFFIX}"
+          IMAGE_REF="${IMAGE_BASE}:${TAG_VALUE}"
+
+          {
+            echo "image_base=${IMAGE_BASE}"
+            echo "tag_value=${TAG_VALUE}"
+            echo "image_ref=${IMAGE_REF}"
+            echo "test_kind=${TEST_KIND}"
+            echo "base_cache_scope=${BASE_CACHE_SCOPE}"
+            echo "variant_cache_scope=${VARIANT_CACHE_SCOPE}"
+
+            echo "cache_from<<EOF"
+            echo "type=gha,scope=${BASE_CACHE_SCOPE}"
+            if [[ "${VARIANT_CACHE_SCOPE}" != "${BASE_CACHE_SCOPE}" ]]; then
+              echo "type=gha,scope=${VARIANT_CACHE_SCOPE}"
+            fi
+            echo "EOF"
+
+            echo "build_args<<EOF"
+            echo "PGVERSION=${PG_MAJOR}"
+            echo "ENABLE_SUPABASE_EXTENSIONS_DEFAULT=${ENABLE_SUPABASE_EXTENSIONS_DEFAULT}"
+            echo "ENABLE_SUPABASE_INIT_DEFAULT=${ENABLE_SUPABASE_INIT_DEFAULT}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build image for local testing
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          load: true
+          tags: ${{ steps.vars.outputs.image_ref }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          cache-from: ${{ steps.vars.outputs.cache_from }}
+          cache-to: type=gha,scope=${{ steps.vars.outputs.variant_cache_scope }},mode=max
+
+      - name: Smoke test Supabase defaults
+        if: matrix.flavor != 'base'
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.vars.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${IMAGE_REF}" \
+            | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'
+
+      - name: Smoke test Supabase auto-init disabled
+        if: matrix.flavor == 'supabase'
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.vars.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${IMAGE_REF}" \
+            | grep '^ENABLE_SUPABASE_INIT=false$'
+
+      - name: Smoke test Supabase auto-init enabled
+        if: matrix.flavor == 'supabase-auto-init'
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.vars.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${IMAGE_REF}" \
+            | grep '^ENABLE_SUPABASE_INIT=true$'
+
+      - name: Test base image
+        if: steps.vars.outputs.test_kind == 'base'
+        env:
+          SPILO_TEST_IMAGE: ${{ steps.vars.outputs.image_ref }}
+        run: bash postgres-appliance/tests/test_spilo.sh
+
+      - name: Test Supabase image
+        if: steps.vars.outputs.test_kind == 'supabase'
+        env:
+          SPILO_TEST_IMAGE: ${{ steps.vars.outputs.image_ref }}
+          SPILO_SUPABASE_TEST_IMAGE: ${{ steps.vars.outputs.image_ref }}
+          EXPECT_SUPABASE_EXTENSIONS: "true"
+          EXPECT_SUPABASE_INIT: ${{ matrix.flavor == 'supabase-auto-init' && 'true' || 'false' }}
+        run: bash postgres-appliance/tests/test_supabase.sh
+
+  publish:
+    name: Publish PG${{ matrix.pg_major }} ${{ matrix.flavor }}
+    needs:
+      - prepare
+      - test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_major: ["15", "16", "17"]
+        flavor: ["base", "supabase", "supabase-auto-init"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image variables
+        id: vars
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          PG_MAJOR: ${{ matrix.pg_major }}
+          FLAVOR: ${{ matrix.flavor }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          BASE_CACHE_SCOPE="spilo-${PG_MAJOR}-base"
+
+          case "${FLAVOR}" in
+            base)
+              TAG_SUFFIX=""
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="false"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              VARIANT_CACHE_SCOPE="${BASE_CACHE_SCOPE}"
+              ;;
+            supabase)
+              TAG_SUFFIX="-supabase"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase"
+              ;;
+            supabase-auto-init)
+              TAG_SUFFIX="-supabase-auto-init"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="true"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-auto-init"
+              ;;
+            *)
+              echo "Unsupported flavor: ${FLAVOR}" >&2
+              exit 1
+              ;;
+          esac
+
+          IMAGE_BASE="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}"
+          TAG_VALUE="${RELEASE_TAG}${TAG_SUFFIX}"
+
+          {
+            echo "image_base=${IMAGE_BASE}"
+            echo "tag_value=${TAG_VALUE}"
+            echo "base_cache_scope=${BASE_CACHE_SCOPE}"
+            echo "variant_cache_scope=${VARIANT_CACHE_SCOPE}"
+
+            echo "cache_from<<EOF"
+            echo "type=gha,scope=${BASE_CACHE_SCOPE}"
+            if [[ "${VARIANT_CACHE_SCOPE}" != "${BASE_CACHE_SCOPE}" ]]; then
+              echo "type=gha,scope=${VARIANT_CACHE_SCOPE}"
+            fi
+            echo "EOF"
+
+            echo "build_args<<EOF"
+            echo "PGVERSION=${PG_MAJOR}"
+            echo "ENABLE_SUPABASE_EXTENSIONS_DEFAULT=${ENABLE_SUPABASE_EXTENSIONS_DEFAULT}"
+            echo "ENABLE_SUPABASE_INIT_DEFAULT=${ENABLE_SUPABASE_INIT_DEFAULT}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.vars.outputs.image_base }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.tag_value }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push multiarch image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          provenance: mode=max
+          sbom: true
+          cache-from: ${{ steps.vars.outputs.cache_from }}
+          cache-to: type=gha,scope=${{ steps.vars.outputs.variant_cache_scope }},mode=max
+
+  mirror-spilo-init:
+    name: Mirror spilo-init helper image
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mirror spilo-init into your namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/spilo-init:0.2 \
+            docker.io/apecloud/spilo-init:0.2
+
+      - name: Inspect mirrored spilo-init image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools inspect \
+            ghcr.io/${{ github.repository_owner }}/spilo-init:0.2
