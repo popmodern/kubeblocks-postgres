@@ -261,13 +261,29 @@ jobs:
           cache-to: ${{ steps.vars.outputs.cache_to }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-  mirror-spilo-init:
-    name: Mirror spilo-init helper image
+  mirror-helper-images:
+    name: Mirror KubeBlocks helper images
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source: docker.io/apecloud/spilo-init:0.2
+            target_repo: spilo-init
+            target_tag: "0.2"
+          - source: ghcr.io/apecloud/pgbouncer:1.19.0
+            target_repo: pgbouncer
+            target_tag: "1.19.0"
+          - source: ghcr.io/apecloud/postgres-exporter:v0.15.0
+            target_repo: postgres-exporter
+            target_tag: v0.15.0
+          - source: ghcr.io/apecloud/dbctl:0.2.0
+            target_repo: dbctl
+            target_tag: "0.2.0"
     steps:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
@@ -281,37 +297,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Mirror spilo-init into your namespace
+      - name: Mirror ${{ matrix.target_repo }}:${{ matrix.target_tag }}
         shell: bash
+        env:
+          SOURCE: ${{ matrix.source }}
+          TARGET: ghcr.io/${{ github.repository_owner }}/${{ matrix.target_repo }}:${{ matrix.target_tag }}
         run: |
           set -euo pipefail
+          docker buildx imagetools create --tag "$TARGET" "$SOURCE"
 
-          docker buildx imagetools create \
-            --tag ghcr.io/${{ github.repository_owner }}/spilo-init:0.2 \
-            docker.io/apecloud/spilo-init:0.2
-
-      - name: Inspect mirrored spilo-init image
+      - name: Inspect mirrored image
         shell: bash
+        env:
+          TARGET: ghcr.io/${{ github.repository_owner }}/${{ matrix.target_repo }}:${{ matrix.target_tag }}
         run: |
           set -euo pipefail
-
-          docker buildx imagetools inspect \
-            ghcr.io/${{ github.repository_owner }}/spilo-init:0.2
+          docker buildx imagetools inspect "$TARGET"
 
   summary:
     name: Release summary
     if: always()
     needs:
       - release
-      - mirror-spilo-init
+      - mirror-helper-images
     runs-on: ubuntu-24.04
     steps:
       - name: Report results
         shell: bash
         run: |
           echo "release result: ${{ needs.release.result }}"
-          echo "mirror-spilo-init result: ${{ needs['mirror-spilo-init'].result }}"
+          echo "mirror-helper-images result: ${{ needs['mirror-helper-images'].result }}"
 
       - name: Fail summary if any required job failed
-        if: needs.release.result != 'success' || needs['mirror-spilo-init'].result != 'success'
+        if: needs.release.result != 'success' || needs['mirror-helper-images'].result != 'success'
         run: exit 1
