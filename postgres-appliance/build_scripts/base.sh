@@ -212,17 +212,28 @@ build_pgxs_extension() {
     PATH="/usr/lib/postgresql/$version/bin:$PATH" make -C "$source_dir" USE_PGXS=1 "${make_args[@]}" "$install_target"
 }
 
-for version in $DEB_PG_SUPPORTED_VERSIONS; do
-    if [ "$version" -lt 14 ] || [ "$version" -gt 17 ]; then
-        echo "ERROR: PostgreSQL ${version} is not supported by this image. Supported majors are 14-17." >&2
+refresh_pg_versions_array() {
+    mapfile -t DEB_PG_VERSIONS < <(
+        tr ' ' '\n' <<< "$DEB_PG_SUPPORTED_VERSIONS" | awk 'NF && !seen[$0]++'
+    )
+
+    if [ "${#DEB_PG_VERSIONS[@]}" -eq 0 ]; then
+        echo "ERROR: DEB_PG_SUPPORTED_VERSIONS resolved to an empty set" >&2
         exit 1
     fi
-done
+
+    DEB_PG_SUPPORTED_VERSIONS="$(printf '%s ' "${DEB_PG_VERSIONS[@]}")"
+    DEB_PG_SUPPORTED_VERSIONS="${DEB_PG_SUPPORTED_VERSIONS% }"
+    export DEB_PG_SUPPORTED_VERSIONS
+}
+
+refresh_pg_versions_array
 
 BUILD_PACKAGES=(devscripts equivs build-essential fakeroot debhelper git gcc libc6-dev make cmake libevent-dev libbrotli-dev libssl-dev libkrb5-dev libsodium-dev flex zlib1g-dev libcurl4-openssl-dev libpsl-dev systemtap-sdt-dev pkg-config)
 if [ "$DEMO" = "true" ]; then
     export DEB_PG_SUPPORTED_VERSIONS="$PGVERSION"
     WITH_PERL=false
+    refresh_pg_versions_array
     rm -f ./*.deb
     apt-get install -y "${BUILD_PACKAGES[@]}" libcurl4
 else
@@ -242,13 +253,14 @@ else
     # prepare 3rd sources
     fetch_github_repo_at_commit "bigsql/plprofiler" "$PLPROFILER_COMMIT" plprofiler
     fetch_github_repo_at_commit "zalando-pg/pg_mon" "$PG_MON_COMMIT" "pg_mon-${PG_MON_COMMIT}"
-
-    for p in python3-keyring python3-docutils ieee-data; do
-        version=$(apt-cache show $p | sed -n 's/^Version: //p' | sort -rV | head -n 1)
-        printf "Section: misc\nPriority: optional\nStandards-Version: 3.9.8\nPackage: %s\nVersion: %s\nDescription: %s" "$p" "$version" "$p" > "$p"
-        equivs-build "$p"
-    done
 fi
+
+for version in "${DEB_PG_VERSIONS[@]}"; do
+    if [ "$version" -lt 14 ] || [ "$version" -gt 17 ]; then
+        echo "ERROR: PostgreSQL ${version} is not supported by this image. Supported majors are 14-17." >&2
+        exit 1
+    fi
+done
 
 if [ "$DEMO" = "true" ]; then
     install_modern_libcurl
@@ -323,9 +335,11 @@ apt-get install -y \
 # forbid creation of a main cluster when package is installed
 sed -ri 's/#(create_main_cluster) .*$/\1 = false/' /etc/postgresql-common/createcluster.conf
 
-for version in $DEB_PG_SUPPORTED_VERSIONS; do
+for version in "${DEB_PG_VERSIONS[@]}"; do
     sed -i "s/ main.*$/ main $version/g" /etc/apt/sources.list.d/pgdg.list
     apt-get update
+
+    EXTRAS=()
 
     if [ "$DEMO" != "true" ]; then
         EXTRAS=("postgresql-pltcl-${version}"
@@ -392,7 +406,7 @@ for version in $DEB_PG_SUPPORTED_VERSIONS; do
 
     exclude_patterns=()
     versions=$(find "/usr/lib/postgresql/$version/lib/" -name 'timescaledb-2.*.so' | sed -rn 's/.*timescaledb-([1-9]+\.[0-9]+\.[0-9]+)\.so$/\1/p' | sort -rV)
-    
+
     # Calculate the number of versions dynamically based on the lowest PG version's latest minor
     num_versions=5
     if [ -n "$first_latest_minor" ]; then
@@ -406,13 +420,13 @@ for version in $DEB_PG_SUPPORTED_VERSIONS; do
                 break
             fi
         done <<< "$minor_versions"
-        
+
         # if found, keep max(5, position) versions (so all versions have at least 1 version in common with lowest PG version)
         if [ $found -eq 1 ] && [ $position -gt $num_versions ]; then
             num_versions=$position
         fi
     fi
-    
+
     latest_minor_versions=$(echo "$versions" | awk -F. '{print $1"."$2}' | uniq | head -n "$num_versions")
     for minor in $latest_minor_versions; do
         for full_version in $(echo "$versions" | grep "^$minor"); do
@@ -508,14 +522,15 @@ apt-get install -y skytools3-ticker pgbouncer
 sed -i "s/ main.*$/ main/g" /etc/apt/sources.list.d/pgdg.list
 apt-get update
 apt-get install -y postgresql postgresql-server-dev-all postgresql-all libpq-dev
-for version in $DEB_PG_SUPPORTED_VERSIONS; do
+for version in "${DEB_PG_VERSIONS[@]}"; do
     apt-get install -y "postgresql-server-dev-${version}"
 done
 
 if [ "$DEMO" != "true" ]; then
-    for version in $DEB_PG_SUPPORTED_VERSIONS; do
-        # create postgis symlinks to make it possible to perform update
-        ln -s "postgis-${POSTGIS_VERSION%.*}.so" "/usr/lib/postgresql/${version}/lib/postgis-2.5.so"
+    for version in "${DEB_PG_VERSIONS[@]}"; do
+        # Create the compatibility symlink idempotently so duplicate or repeated
+        # version processing does not fail the build.
+        ln -sfn "postgis-${POSTGIS_VERSION%.*}.so" "/usr/lib/postgresql/${version}/lib/postgis-2.5.so"
     done
 fi
 
