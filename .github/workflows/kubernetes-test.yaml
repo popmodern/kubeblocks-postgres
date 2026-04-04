@@ -1,28 +1,194 @@
 name: Kubernetes Installation Test
 
-on: 
+on:
   pull_request:
     paths:
-    - 'kubernetes/**'
+      - "kubernetes/**"
+      - "postgres-appliance/**"
+      - ".github/workflows/tests.yml"
+      - ".github/workflows/publish-ghcr-container.yml"
+      - ".github/workflows/kubernetes-test.yml"
   push:
     branches:
-    - trigger
-    - support-supabase-extensions-and-tables
+      - trigger
+      - support-supabase-extensions-and-tables
     paths:
-    - 'kubernetes/**'
+      - "kubernetes/**"
+      - "postgres-appliance/**"
+      - ".github/workflows/tests.yml"
+      - ".github/workflows/publish-ghcr-container.yml"
+      - ".github/workflows/kubernetes-test.yml"
   workflow_dispatch:
 
 concurrency:
   group: kubernetes-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   kubernetes-installation-test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Create Kind Cluster
-      uses: helm/kind-action@v1
-    - name: Install Spilo
-      run: kubectl apply -f kubernetes/spilo_kubernetes.yaml
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install PyYAML
+        run: python -m pip install pyyaml
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          version: latest
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image and cache variables
+        id: vars
+        shell: bash
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          PG_MAJOR="17"
+          BASE_CACHE_SCOPE="spilo-${PG_MAJOR}-base"
+          BASE_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache"
+          LOCAL_IMAGE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:ci-${GITHUB_SHA::12}"
+
+          {
+            echo "local_image_ref=${LOCAL_IMAGE_REF}"
+
+            echo "build_args<<EOF"
+            echo "PGVERSION=${PG_MAJOR}"
+            echo "ENABLE_SUPABASE_EXTENSIONS_DEFAULT=false"
+            echo "ENABLE_SUPABASE_INIT_DEFAULT=false"
+            echo "EOF"
+
+            echo "cache_from_gha=type=gha,scope=${BASE_CACHE_SCOPE}"
+            echo "cache_to_gha=type=gha,scope=${BASE_CACHE_SCOPE},mode=max,ignore-error=true"
+
+            echo "cache_from_dual<<EOF"
+            echo "type=gha,scope=${BASE_CACHE_SCOPE}"
+            echo "type=registry,ref=${BASE_CACHE_REF}"
+            echo "EOF"
+
+            echo "cache_to_dual<<EOF"
+            echo "type=gha,scope=${BASE_CACHE_SCOPE},mode=max,ignore-error=true"
+            echo "type=registry,ref=${BASE_CACHE_REF},mode=max,ignore-error=true"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build local image with dual cache
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          load: true
+          tags: ${{ steps.vars.outputs.local_image_ref }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          cache-from: ${{ steps.vars.outputs.cache_from_dual }}
+          cache-to: ${{ steps.vars.outputs.cache_to_dual }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build local image with GHA cache only
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          load: true
+          tags: ${{ steps.vars.outputs.local_image_ref }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          cache-from: ${{ steps.vars.outputs.cache_from_gha }}
+          cache-to: ${{ steps.vars.outputs.cache_to_gha }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Kind Cluster
+        uses: helm/kind-action@v1
+
+      - name: Load built image into Kind
+        run: kind load docker-image "${{ steps.vars.outputs.local_image_ref }}"
+
+      - name: Patch Kubernetes manifest to use the locally built image
+        env:
+          IMAGE_REF: ${{ steps.vars.outputs.local_image_ref }}
+        run: |
+          python <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          src = Path("kubernetes/spilo_kubernetes.yaml")
+          dst = Path("kubernetes/.generated-spilo_kubernetes.yaml")
+          image_ref = os.environ["IMAGE_REF"]
+
+          docs = list(yaml.safe_load_all(src.read_text()))
+          patched = 0
+
+          def maybe_patch_podspec(podspec):
+            nonlocal_patched = 0
+            if not isinstance(podspec, dict):
+              return 0
+            for key in ("containers", "initContainers"):
+              items = podspec.get(key) or []
+              for container in items:
+                image = container.get("image")
+                if isinstance(image, str) and ("spilo" in image or "kubeblocks-postgres" in image):
+                  container["image"] = image_ref
+                  container["imagePullPolicy"] = "Never"
+                  nonlocal_patched += 1
+            return nonlocal_patched
+
+          for doc in docs:
+            if not isinstance(doc, dict):
+              continue
+
+            kind = doc.get("kind")
+            spec = doc.get("spec")
+
+            if kind == "Pod" and isinstance(spec, dict):
+              patched += maybe_patch_podspec(spec)
+              continue
+
+            if not isinstance(spec, dict):
+              continue
+
+            template = spec.get("template")
+            if isinstance(template, dict):
+              patched += maybe_patch_podspec(template.get("spec"))
+
+          if patched == 0:
+            raise SystemExit("No spilo image references were patched in kubernetes/spilo_kubernetes.yaml")
+
+          dst.write_text(yaml.safe_dump_all(docs, sort_keys=False))
+          print(f"Patched {patched} image reference(s) into {dst}")
+          PY
+
+      - name: Install Spilo
+        run: kubectl apply -f kubernetes/.generated-spilo_kubernetes.yaml
+
+      - name: Show resources
+        run: |
+          kubectl get all -A
+          kubectl get pods -A -o wide
+
+      - name: Wait for pods to become Ready
+        run: kubectl wait --for=condition=Ready pods --all --timeout=10m

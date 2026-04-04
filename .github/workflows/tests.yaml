@@ -1,12 +1,12 @@
-name: ubuntu
+name: Tests
 
-on: 
+on:
   pull_request:
   push:
     branches:
-    - master
-    - trigger
-    - support-supabase-extensions-and-tables
+      - master
+      - trigger
+      - support-supabase-extensions-and-tables
   workflow_dispatch:
     inputs:
       run_locales_test:
@@ -19,67 +19,277 @@ concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  lint:
-    runs-on: ubuntu-22.04
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      ci_tag: ${{ steps.vars.outputs.ci_tag }}
     steps:
-    - uses: actions/checkout@v6
-    - name: Set up packages
-      run: sudo apt-get install -y shellcheck
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.10'
-    - name: Install flake8
-      run: python -m pip install flake8
-    - name: Run shellcheck
-      run: find postgres-appliance -name '*.sh' -print0 | xargs -0 shellcheck
-    - name: Run flake8
-      run: find postgres-appliance -name '*.py' -print0 | xargs -0 python -m flake8
+      - name: Derive CI tag
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ci_tag=ci-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Select test matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            cat >> "$GITHUB_OUTPUT" <<'EOF'
+              matrix={"include":[
+                {"pg_major":"17","flavor":"base"},
+                {"pg_major":"17","flavor":"supabase"},
+                {"pg_major":"17","flavor":"supabase-auto-init"}
+              ]}
+            EOF
+          else
+            cat >> "$GITHUB_OUTPUT" <<'EOF'
+              matrix={"include":[
+                {"pg_major":"15","flavor":"base"},
+                {"pg_major":"15","flavor":"supabase"},
+                {"pg_major":"15","flavor":"supabase-auto-init"},
+                {"pg_major":"16","flavor":"base"},
+                {"pg_major":"16","flavor":"supabase"},
+                {"pg_major":"16","flavor":"supabase-auto-init"},
+                {"pg_major":"17","flavor":"base"},
+                {"pg_major":"17","flavor":"supabase"},
+                {"pg_major":"17","flavor":"supabase-auto-init"}
+              ]}
+            EOF
+          fi
+
+  lint-shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: find postgres-appliance -name '*.sh' -print0 | xargs -0 shellcheck
+
+  lint-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install flake8
+        run: python -m pip install flake8
+
+      - name: Run flake8
+        run: find postgres-appliance -name '*.py' -print0 | xargs -0 python -m flake8
 
   tests:
-    runs-on: ubuntu-22.04
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    permissions:
+      contents: read
+      packages: write
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Set up packages
-      run: sudo apt-get install -y docker-compose
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
-    - name: Build spilo docker image
-      uses: docker/build-push-action@v7
-      with:
-        context: postgres-appliance/
-        load: true
-        tags: spilo
-        cache-from: type=gha,scope=spilo-build
-        cache-to: type=gha,scope=spilo-build,mode=max
-    - name: Build Supabase-default docker image
-      uses: docker/build-push-action@v7
-      with:
-        context: postgres-appliance/
-        load: true
-        tags: spilo-supabase
-        build-args: |
-          ENABLE_SUPABASE_EXTENSIONS_DEFAULT=true
-        cache-from: |
-          type=gha,scope=spilo-build
-          type=gha,scope=spilo-supabase-build
-        cache-to: type=gha,scope=spilo-supabase-build,mode=max
-    - name: Smoke test Supabase-default docker image metadata
-      run: |
-        docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' spilo-supabase | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'
-        docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' spilo-supabase | grep '^ENABLE_SUPABASE_INIT=false$'
-    - name: Test spilo docker image
-      env:
-        SPILO_TEST_IMAGE: spilo
-      run: bash postgres-appliance/tests/test_spilo.sh
-    - name: Test Supabase bootstrap flow
-      env:
-        SPILO_TEST_IMAGE: spilo-supabase
-        SPILO_SUPABASE_TEST_IMAGE: spilo-supabase
-      run: bash postgres-appliance/tests/test_supabase.sh
-    - name: Test USE_OLD_LOCALES
-      run: bash -x postgres-appliance/tests/locales_test/test_locales.sh
-      if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_locales_test)
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v2
+        with:
+          version: latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          version: latest
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image and cache variables
+        id: vars
+        shell: bash
+        env:
+          CI_TAG: ${{ needs.prepare.outputs.ci_tag }}
+          PG_MAJOR: ${{ matrix.pg_major }}
+          FLAVOR: ${{ matrix.flavor }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          BASE_CACHE_SCOPE="spilo-${PG_MAJOR}-base"
+          BASE_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache"
+
+          case "${FLAVOR}" in
+            base)
+              TAG_SUFFIX=""
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="false"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              TEST_KIND="base"
+              VARIANT_CACHE_SCOPE="${BASE_CACHE_SCOPE}"
+              VARIANT_CACHE_REF="${BASE_CACHE_REF}"
+              ;;
+            supabase)
+              TAG_SUFFIX="-supabase"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              TEST_KIND="supabase"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase"
+              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase"
+              ;;
+            supabase-auto-init)
+              TAG_SUFFIX="-supabase-auto-init"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="true"
+              TEST_KIND="supabase"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-auto-init"
+              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase-auto-init"
+              ;;
+            *)
+              echo "Unsupported flavor: ${FLAVOR}" >&2
+              exit 1
+              ;;
+          esac
+
+          LOCAL_IMAGE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:${CI_TAG}${TAG_SUFFIX}"
+
+          {
+            echo "local_image_ref=${LOCAL_IMAGE_REF}"
+            echo "test_kind=${TEST_KIND}"
+            echo "base_cache_scope=${BASE_CACHE_SCOPE}"
+            echo "variant_cache_scope=${VARIANT_CACHE_SCOPE}"
+            echo "base_cache_ref=${BASE_CACHE_REF}"
+            echo "variant_cache_ref=${VARIANT_CACHE_REF}"
+
+            echo "build_args<<EOF"
+            echo "PGVERSION=${PG_MAJOR}"
+            echo "ENABLE_SUPABASE_EXTENSIONS_DEFAULT=${ENABLE_SUPABASE_EXTENSIONS_DEFAULT}"
+            echo "ENABLE_SUPABASE_INIT_DEFAULT=${ENABLE_SUPABASE_INIT_DEFAULT}"
+            echo "EOF"
+
+            echo "cache_from_gha<<EOF"
+            echo "type=gha,scope=${BASE_CACHE_SCOPE}"
+            if [[ "${VARIANT_CACHE_SCOPE}" != "${BASE_CACHE_SCOPE}" ]]; then
+              echo "type=gha,scope=${VARIANT_CACHE_SCOPE}"
+            fi
+            echo "EOF"
+
+            echo "cache_from_dual<<EOF"
+            echo "type=gha,scope=${BASE_CACHE_SCOPE}"
+            if [[ "${VARIANT_CACHE_SCOPE}" != "${BASE_CACHE_SCOPE}" ]]; then
+              echo "type=gha,scope=${VARIANT_CACHE_SCOPE}"
+            fi
+            echo "type=registry,ref=${BASE_CACHE_REF}"
+            if [[ "${VARIANT_CACHE_REF}" != "${BASE_CACHE_REF}" ]]; then
+              echo "type=registry,ref=${VARIANT_CACHE_REF}"
+            fi
+            echo "EOF"
+
+            echo "cache_to_gha=type=gha,scope=${VARIANT_CACHE_SCOPE},mode=max,ignore-error=true"
+
+            echo "cache_to_dual<<EOF"
+            echo "type=gha,scope=${VARIANT_CACHE_SCOPE},mode=max,ignore-error=true"
+            echo "type=registry,ref=${VARIANT_CACHE_REF},mode=max,ignore-error=true"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build image for local testing with dual cache
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          load: true
+          tags: ${{ steps.vars.outputs.local_image_ref }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          cache-from: ${{ steps.vars.outputs.cache_from_dual }}
+          cache-to: ${{ steps.vars.outputs.cache_to_dual }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image for local testing with GHA cache only
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          load: true
+          tags: ${{ steps.vars.outputs.local_image_ref }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          cache-from: ${{ steps.vars.outputs.cache_from_gha }}
+          cache-to: ${{ steps.vars.outputs.cache_to_gha }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke test Supabase defaults
+        if: matrix.flavor != 'base'
+        env:
+          IMAGE_REF: ${{ steps.vars.outputs.local_image_ref }}
+        run: |
+          set -euo pipefail
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${IMAGE_REF}" | grep '^ENABLE_SUPABASE_EXTENSIONS=true$'
+
+      - name: Smoke test Supabase auto-init disabled
+        if: matrix.flavor == 'supabase'
+        env:
+          IMAGE_REF: ${{ steps.vars.outputs.local_image_ref }}
+        run: |
+          set -euo pipefail
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${IMAGE_REF}" | grep '^ENABLE_SUPABASE_INIT=false$'
+
+      - name: Smoke test Supabase auto-init enabled
+        if: matrix.flavor == 'supabase-auto-init'
+        env:
+          IMAGE_REF: ${{ steps.vars.outputs.local_image_ref }}
+        run: |
+          set -euo pipefail
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${IMAGE_REF}" | grep '^ENABLE_SUPABASE_INIT=true$'
+
+      - name: Test base image
+        if: steps.vars.outputs.test_kind == 'base'
+        env:
+          SPILO_TEST_IMAGE: ${{ steps.vars.outputs.local_image_ref }}
+        run: bash postgres-appliance/tests/test_spilo.sh
+
+      - name: Test Supabase image
+        if: steps.vars.outputs.test_kind == 'supabase'
+        env:
+          SPILO_TEST_IMAGE: ${{ steps.vars.outputs.local_image_ref }}
+          SPILO_SUPABASE_TEST_IMAGE: ${{ steps.vars.outputs.local_image_ref }}
+          EXPECT_SUPABASE_EXTENSIONS: "true"
+          EXPECT_SUPABASE_INIT: ${{ matrix.flavor == 'supabase-auto-init' && 'true' || 'false' }}
+        run: bash postgres-appliance/tests/test_supabase.sh
+
+  locales:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_locales_test)
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test USE_OLD_LOCALES
+        run: bash -x postgres-appliance/tests/locales_test/test_locales.sh
