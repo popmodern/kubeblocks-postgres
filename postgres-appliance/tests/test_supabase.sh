@@ -268,6 +268,24 @@ function verify_supabase_wal_level() {
     [ "$wal_level" = "logical" ]
 }
 
+function verify_supabase_key_script_unset() {
+    local key_script
+
+    key_script=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT current_setting('pgsodium.getkey_script', true)\"" 2> /dev/null || true)
+    [ -z "$key_script" ]
+}
+
+function verify_supabase_bootstrap_not_applied() {
+    local schema_migrations_ready
+
+    schema_migrations_ready=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT to_regclass('public.schema_migrations') IS NOT NULL\"" 2> /dev/null || true)
+    [ "$schema_migrations_ready" = "f" ]
+}
+
+function verify_supabase_bootstrap_skipped_log() {
+    docker logs "$1" 2>&1 | grep -F "WARNING: Supabase bootstrap requested but no pgsodium root key source is configured. Skipping bootstrap" > /dev/null
+}
+
 function verify_supabase_roles() {
     local count
     count=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT COUNT(*) FROM pg_roles WHERE rolname IN ('anon','authenticated','authenticator','dashboard_user','pgbouncer','service_role','supabase_admin','supabase_auth_admin','supabase_etl_admin','supabase_read_only_user','supabase_replication_admin','supabase_storage_admin')\"")
@@ -431,12 +449,24 @@ function test_supabase_bootstrap() {
     run_supabase_bundle_assertions "$container"
 }
 
-function test_supabase_custom_sql() {
+function test_supabase_missing_key_bootstrap_skip() {
     local container=$1
 
     log_info "[TS9] Waiting for Patroni leader on $container..."
     find_leader "$container" 1 "$SUPABASE_TIMEOUT"
-    log_info "[TS9] Waiting for Supabase bundle and custom SQL on $container..."
+
+    run_test verify_supabase_wal_level "$container"
+    run_test verify_supabase_key_script_unset "$container"
+    run_test verify_supabase_bootstrap_not_applied "$container"
+    run_test verify_supabase_bootstrap_skipped_log "$container"
+}
+
+function test_supabase_custom_sql() {
+    local container=$1
+
+    log_info "[TS10] Waiting for Patroni leader on $container..."
+    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    log_info "[TS10] Waiting for Supabase bundle and custom SQL on $container..."
     wait_supabase_custom_ready "$container"
 
     run_supabase_bundle_assertions "$container"
@@ -448,9 +478,9 @@ function test_supabase_custom_sql() {
 function test_supabase_legacy_bootstrap() {
     local container=$1
 
-    log_info "[TS10] Waiting for Patroni leader on $container..."
+    log_info "[TS11] Waiting for Patroni leader on $container..."
     find_leader "$container" 1 "$SUPABASE_TIMEOUT"
-    log_info "[TS10] Waiting for PG14 legacy Supabase bootstrap on $container..."
+    log_info "[TS11] Waiting for PG14 legacy Supabase bootstrap on $container..."
     wait_supabase_legacy_ready "$container"
 
     run_supabase_legacy_assertions "$container"
@@ -459,9 +489,9 @@ function test_supabase_legacy_bootstrap() {
 function test_supabase_legacy_custom_sql() {
     local container=$1
 
-    log_info "[TS11] Waiting for Patroni leader on $container..."
+    log_info "[TS12] Waiting for Patroni leader on $container..."
     find_leader "$container" 1 "$SUPABASE_TIMEOUT"
-    log_info "[TS11] Waiting for PG14 legacy Supabase custom SQL on $container..."
+    log_info "[TS12] Waiting for PG14 legacy Supabase custom SQL on $container..."
     wait_supabase_legacy_custom_ready "$container"
 
     run_supabase_legacy_assertions "$container"
@@ -474,9 +504,10 @@ function main() {
     export SUPABASE_MODERN_PGVERSION
     SUPABASE_MODERN_PGVERSION=$(resolve_supabase_modern_pgversion)
     log_info "Using PostgreSQL ${SUPABASE_MODERN_PGVERSION} for modern Supabase test containers"
-    start_containers etcd supabase supabase-custom supabase-legacy supabase-legacy-custom
+    start_containers etcd supabase supabase-no-key supabase-custom supabase-legacy supabase-legacy-custom
 
     test_supabase_bootstrap "${PREFIX}supabase"
+    test_supabase_missing_key_bootstrap_skip "${PREFIX}supabase-no-key"
     test_supabase_custom_sql "${PREFIX}supabase-custom"
     test_supabase_legacy_bootstrap "${PREFIX}supabase-legacy"
     test_supabase_legacy_custom_sql "${PREFIX}supabase-legacy-custom"
