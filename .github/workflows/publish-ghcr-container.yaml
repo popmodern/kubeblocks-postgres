@@ -228,8 +228,6 @@ jobs:
         env:
           SPILO_TEST_IMAGE: ${{ steps.vars.outputs.local_image_ref }}
           SPILO_SUPABASE_TEST_IMAGE: ${{ steps.vars.outputs.local_image_ref }}
-          EXPECT_SUPABASE_EXTENSIONS: "true"
-          EXPECT_SUPABASE_INIT: ${{ matrix.flavor == 'supabase-auto-init' && 'true' || 'false' }}
         run: bash postgres-appliance/tests/test_supabase.sh
 
       - name: Compute tags and labels
