@@ -248,6 +248,18 @@ class _PostgresqlUpgrade(Postgresql):
             return False
         self.bootstrap._running_custom_bootstrap = False
 
+        # Preserve the cluster-local pgsodium root key when the fallback key
+        # lives inside PGDATA. Explicit external key files are left untouched.
+        fallback_key_file = os.environ.get('PGSODIUM_KEY_FILE')
+        if fallback_key_file:
+            old_key_file = os.path.abspath(fallback_key_file)
+            old_data_dir = os.path.abspath(self._new_data_dir)
+            if old_key_file.startswith(old_data_dir + os.sep) and os.path.exists(old_key_file):
+                relative_key_file = os.path.relpath(old_key_file, old_data_dir)
+                new_key_file = os.path.join(self._data_dir, relative_key_file)
+                os.makedirs(os.path.dirname(new_key_file), exist_ok=True)
+                shutil.copy(old_key_file, new_key_file)
+
         # Copy old configs. XXX: some parameters might be incompatible!
         for f in os.listdir(self._new_data_dir):
             if f.startswith('postgresql.') or f.startswith('pg_hba.conf') or f == 'patroni.dynamic.json':
