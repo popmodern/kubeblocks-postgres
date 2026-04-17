@@ -27,11 +27,11 @@ After building the image, you can test your image by:
 The suites now have different jobs:
 
 - `test_spilo.sh` covers the main upgrade, clone, replica, whitelist, and hourly log rotation matrix.
-- `test_supabase.sh` covers PG15+ Supabase bootstrap, PG15+ custom SQL hooks, PG14 legacy bootstrap, and PG14 legacy custom SQL hooks.
+- `test_supabase.sh` covers PG15+ Supabase bootstrap with explicit and generated pgsodium keys, PG15+ custom SQL hooks, PG14 legacy bootstrap, and PG14 legacy custom SQL hooks.
 
-For the Supabase path, image build only prepares static artifacts: binaries, extensions, runtime scripts, and the vendored upstream migration bundle under `/usr/share/supabase/postgres/migrations`. The actual SQL bootstrap still happens on first cluster initialization through Patroni's `post_init` hook in `post_init.sh`.
+For the Supabase path, image build prepares the static artifacts that upstream Supabase startup expects: binaries, extensions, runtime scripts, the vendored upstream migration bundle under `/usr/share/supabase/postgres/migrations`, and a working pgsodium getkey script path. The actual SQL bootstrap still happens on first cluster initialization through Patroni's `post_init` hook in `post_init.sh`.
 
-The `supabase bundle ready` wait in `test_supabase.sh` is intentionally stricter than container health. It waits for the live database to contain the bundled migration state and the `supabase_realtime` publication, so a skipped bootstrap fails fast as a bootstrap/configuration problem rather than looking like a generic startup timeout.
+The `supabase bundle ready` wait in `test_supabase.sh` is intentionally stricter than container health. It waits for the live database to contain the bundled migration state and the `supabase_realtime` publication, so bootstrap regressions fail fast as configuration problems rather than looking like generic startup timeouts. The keyless Supabase scenario now verifies that Spilo generates and reuses a persistent cluster-local pgsodium root key when no explicit external key source is provided.
 
 The test will create multiple containers. They will be cleaned up by the last line before running `main` in `test_spilo.sh`. To keep and debug the containers after running the test, this part can be commented.
 ```
