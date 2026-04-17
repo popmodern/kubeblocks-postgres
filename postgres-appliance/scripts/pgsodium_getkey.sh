@@ -2,11 +2,31 @@
 # pgsodium key provider script
 # Returns the server key used by pgsodium for encryption.
 # Supply the key via PGSODIUM_KEY or mount it in a file referenced by
-# PGSODIUM_KEY_FILE. The key must be a 64 character hex string.
+# PGSODIUM_KEY_FILE. When Spilo enables Supabase support without an explicit
+# external key source, launch.sh points PGSODIUM_KEY_FILE at a persistent
+# cluster-local fallback path inside PGDATA and sets
+# SPILO_AUTO_GENERATE_PGSODIUM_KEY=true so this script can generate the key on
+# first boot. The key must always be a 64 character hex string.
 
 set -euo pipefail
 
+generate_key_file() {
+    local key_file=$1
+    local old_umask
+
+    mkdir -p "$(dirname "$key_file")"
+
+    old_umask=$(umask)
+    umask 077
+    head -c 32 /dev/urandom | od -A n -t x1 | tr -d ' \n' > "$key_file"
+    umask "$old_umask"
+}
+
 if [ -n "${PGSODIUM_KEY_FILE:-}" ]; then
+    if [ ! -e "$PGSODIUM_KEY_FILE" ] && [ "${SPILO_AUTO_GENERATE_PGSODIUM_KEY:-}" = "true" ]; then
+        generate_key_file "$PGSODIUM_KEY_FILE"
+    fi
+
     if [ ! -r "$PGSODIUM_KEY_FILE" ]; then
         echo "ERROR: PGSODIUM_KEY_FILE is set but not readable: $PGSODIUM_KEY_FILE" >&2
         exit 1

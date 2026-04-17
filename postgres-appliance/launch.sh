@@ -45,6 +45,9 @@ if [ "${ENABLE_SUPABASE_INIT:-}" = "true" ]; then
     printf 'true\n' > "$SUPABASE_INIT_FLAG_FILE"
 fi
 
+# Supabase-compatible images need a getkey path at PostgreSQL startup.
+# Prefer explicit secret-backed key sources, but fall back to a cluster-local
+# persistent key file inside PGDATA when none is provided.
 if [ -n "${PGSODIUM_KEY:-}" ] && [ -z "${PGSODIUM_KEY_FILE:-}" ]; then
     old_umask=$(umask)
     PGSODIUM_KEY_FILE="$RW_DIR/tmp/pgsodium-root.key"
@@ -56,6 +59,13 @@ if [ -n "${PGSODIUM_KEY:-}" ] && [ -z "${PGSODIUM_KEY_FILE:-}" ]; then
 
     export PGSODIUM_KEY_FILE
     unset PGSODIUM_KEY
+    unset SPILO_AUTO_GENERATE_PGSODIUM_KEY
+elif [ "${ENABLE_SUPABASE_EXTENSIONS:-}" = "true" ] && [ -z "${PGSODIUM_KEY_FILE:-}" ]; then
+    PGSODIUM_KEY_FILE="$PGDATA/pgsodium_root.key"
+    export PGSODIUM_KEY_FILE
+    export SPILO_AUTO_GENERATE_PGSODIUM_KEY=true
+else
+    unset SPILO_AUTO_GENERATE_PGSODIUM_KEY
 fi
 
 ## Ensure all logfiles exist, most appliances will have

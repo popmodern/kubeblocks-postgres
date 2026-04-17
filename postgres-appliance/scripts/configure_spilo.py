@@ -78,9 +78,15 @@ def link_runit_service(placeholders, name):
         os.makedirs(os.path.join(placeholders['RW_DIR'], 'supervise', name))
 
 
-def supabase_pgsodium_key_configured():
-    return bool((os.environ.get('PGSODIUM_KEY_FILE') or '').strip()
-                or (os.environ.get('PGSODIUM_KEY') or '').strip())
+def default_supabase_getkey_script(version):
+    version_name = str(int(float(version))) if str(version).replace('.', '', 1).isdigit() else str(version)
+    return '/usr/share/postgresql/{0}/extension/pgsodium_getkey'.format(version_name)
+
+
+def resolved_supabase_getkey_script(user_config, default_path):
+    return user_postgresql_parameter(user_config, 'pgsodium.getkey_script') \
+        or user_postgresql_parameter(user_config, 'vault.getkey_script') \
+        or default_path
 
 
 def write_certificates(environment, overwrite):
@@ -1182,10 +1188,15 @@ def main():
     if 'extwlist.extensions' not in user_config.get('postgresql', {}).get('parameters', {}):
         config['postgresql']['parameters']['extwlist.extensions'] =\
                 append_extensions(config['postgresql']['parameters']['extwlist.extensions'], version, True)
-    if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true' and \
-            supabase_pgsodium_key_configured() and \
-            user_postgresql_parameter(user_config, 'pgsodium.getkey_script') is None:
-        config['postgresql']['parameters']['pgsodium.getkey_script'] = '/scripts/pgsodium_getkey.sh'
+    if os.environ.get('ENABLE_SUPABASE_EXTENSIONS') == 'true':
+        default_getkey_script = default_supabase_getkey_script(placeholders['PGVERSION'])
+        supabase_getkey_script = resolved_supabase_getkey_script(user_config, default_getkey_script)
+
+        if user_postgresql_parameter(user_config, 'pgsodium.getkey_script') is None:
+            config['postgresql']['parameters']['pgsodium.getkey_script'] = supabase_getkey_script
+
+        if user_postgresql_parameter(user_config, 'vault.getkey_script') is None:
+            config['postgresql']['parameters']['vault.getkey_script'] = supabase_getkey_script
 
     if os.environ.get('ENABLE_SUPABASE_INIT') == 'true' and \
             user_postgresql_parameter(user_config, 'wal_level') is None:
