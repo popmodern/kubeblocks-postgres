@@ -91,6 +91,7 @@ services:
         hostname: supabase
         container_name: demo-supabase
 
+    # Exercises the default generated pgsodium root key path.
     supabase-no-key:
         image: ${SPILO_SUPABASE_TEST_IMAGE:-spilo-supabase}
         networks: [ demo ]

@@ -157,7 +157,13 @@ COPY build_scripts/post_build.sh build_scripts/verify_commands.sh /builddeps/
 RUN sh /builddeps/post_build.sh
 
 COPY scripts bootstrap major_upgrade /scripts/
-RUN chmod +x /scripts/pgsodium_getkey.sh /scripts/run_supabase_migrations.sh && sh /builddeps/verify_commands.sh && rm -rf /builddeps/
+RUN chmod +x /scripts/pgsodium_getkey.sh /scripts/run_supabase_migrations.sh \
+    && for extension_dir in /usr/share/postgresql/*/extension; do \
+        [ -d "$extension_dir" ] || continue; \
+        ln -sf /scripts/pgsodium_getkey.sh "$extension_dir/pgsodium_getkey"; \
+    done \
+    && sh /builddeps/verify_commands.sh \
+    && rm -rf /builddeps/
 COPY launch.sh /
 
 CMD ["/bin/sh", "/launch.sh", "init"]

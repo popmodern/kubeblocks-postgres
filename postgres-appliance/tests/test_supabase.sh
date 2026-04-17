@@ -268,22 +268,51 @@ function verify_supabase_wal_level() {
     [ "$wal_level" = "logical" ]
 }
 
-function verify_supabase_key_script_unset() {
-    local key_script
+function verify_supabase_key_scripts_configured() {
+    local pgsodium_key_script
+    local vault_key_script
 
-    key_script=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT current_setting('pgsodium.getkey_script', true)\"" 2> /dev/null || true)
-    [ -z "$key_script" ]
+    pgsodium_key_script=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT current_setting('pgsodium.getkey_script', true)\"" 2> /dev/null || true)
+    vault_key_script=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT current_setting('vault.getkey_script', true)\"" 2> /dev/null || true)
+
+    [ -n "$pgsodium_key_script" ] &&
+    [ "$pgsodium_key_script" = "$vault_key_script" ] &&
+    printf '%s\n' "$pgsodium_key_script" | grep -Eq '^/usr/share/postgresql/[0-9]+/extension/pgsodium_getkey$' &&
+    docker_exec "$1" "test -x \"$pgsodium_key_script\""
 }
 
-function verify_supabase_bootstrap_not_applied() {
-    local schema_migrations_ready
+function supabase_generated_key_path() {
+    local data_directory
 
-    schema_migrations_ready=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SELECT to_regclass('public.schema_migrations') IS NOT NULL\"" 2> /dev/null || true)
-    [ "$schema_migrations_ready" = "f" ]
+    data_directory=$(docker_exec "$1" "psql -U postgres -d postgres -tAc \"SHOW data_directory\"" 2> /dev/null || true)
+    [ -n "$data_directory" ] || return 1
+
+    printf '%s/pgsodium_root.key\n' "$data_directory"
 }
 
-function verify_supabase_bootstrap_skipped_log() {
-    docker logs "$1" 2>&1 | grep -F "WARNING: Supabase bootstrap requested but no pgsodium root key source is configured. Skipping bootstrap" > /dev/null
+function verify_supabase_generated_key_file() {
+    local key_file
+
+    key_file=$(supabase_generated_key_path "$1") || return 1
+    docker_exec "$1" "test -r \"$key_file\" && tr -d '[:space:]' < \"$key_file\" | grep -Eq '^[0-9a-fA-F]{64}$'"
+}
+
+function verify_supabase_generated_key_persists_restart() {
+    local container=$1
+    local key_file
+    local before_hash
+    local after_hash
+
+    key_file=$(supabase_generated_key_path "$container") || return 1
+    before_hash=$(docker_exec "$container" "sha256sum \"$key_file\" | awk '{print \$1}'" 2> /dev/null || true)
+    [ -n "$before_hash" ] || return 1
+
+    docker restart "$container" > /dev/null
+    find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    wait_supabase_bundle_ready "$container"
+
+    after_hash=$(docker_exec "$container" "sha256sum \"$key_file\" | awk '{print \$1}'" 2> /dev/null || true)
+    [ "$before_hash" = "$after_hash" ]
 }
 
 function verify_supabase_roles() {
@@ -416,6 +445,7 @@ function run_supabase_bundle_assertions() {
     local container=$1
 
     run_test verify_supabase_wal_level "$container"
+    run_test verify_supabase_key_scripts_configured "$container"
     run_test verify_supabase_roles "$container"
     run_test verify_supabase_schemas "$container"
     run_test verify_supabase_extensions "$container"
@@ -431,6 +461,7 @@ function run_supabase_legacy_assertions() {
     local container=$1
 
     run_test verify_supabase_wal_level "$container"
+    run_test verify_supabase_key_scripts_configured "$container"
     run_test verify_supabase_legacy_roles "$container"
     run_test verify_supabase_legacy_schemas "$container"
     run_test verify_supabase_legacy_extensions "$container"
@@ -449,16 +480,17 @@ function test_supabase_bootstrap() {
     run_supabase_bundle_assertions "$container"
 }
 
-function test_supabase_missing_key_bootstrap_skip() {
+function test_supabase_generated_key_bootstrap() {
     local container=$1
 
     log_info "[TS9] Waiting for Patroni leader on $container..."
     find_leader "$container" 1 "$SUPABASE_TIMEOUT"
+    log_info "[TS9] Waiting for full Supabase bootstrap with generated key on $container..."
+    wait_supabase_bundle_ready "$container"
 
-    run_test verify_supabase_wal_level "$container"
-    run_test verify_supabase_key_script_unset "$container"
-    run_test verify_supabase_bootstrap_not_applied "$container"
-    run_test verify_supabase_bootstrap_skipped_log "$container"
+    run_supabase_bundle_assertions "$container"
+    run_test verify_supabase_generated_key_file "$container"
+    run_test verify_supabase_generated_key_persists_restart "$container"
 }
 
 function test_supabase_custom_sql() {
@@ -507,7 +539,7 @@ function main() {
     start_containers etcd supabase supabase-no-key supabase-custom supabase-legacy supabase-legacy-custom
 
     test_supabase_bootstrap "${PREFIX}supabase"
-    test_supabase_missing_key_bootstrap_skip "${PREFIX}supabase-no-key"
+    test_supabase_generated_key_bootstrap "${PREFIX}supabase-no-key"
     test_supabase_custom_sql "${PREFIX}supabase-custom"
     test_supabase_legacy_bootstrap "${PREFIX}supabase-legacy"
     test_supabase_legacy_custom_sql "${PREFIX}supabase-legacy-custom"
