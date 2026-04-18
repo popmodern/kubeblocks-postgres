@@ -53,8 +53,8 @@ jobs:
 
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-  release:
-    name: Release PG${{ matrix.pg_major }} ${{ matrix.flavor }}
+  release-amd64:
+    name: Release amd64 PG${{ matrix.pg_major }} ${{ matrix.flavor }}
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -83,9 +83,6 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
         with:
@@ -105,13 +102,14 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           PG_MAJOR: ${{ matrix.pg_major }}
           FLAVOR: ${{ matrix.flavor }}
+          TARGET_ARCH: amd64
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
           set -euo pipefail
 
-          BASE_CACHE_SCOPE="spilo-${PG_MAJOR}-base"
-          BASE_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache"
+          BASE_CACHE_SCOPE="spilo-${PG_MAJOR}-base-${TARGET_ARCH}"
+          BASE_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-${TARGET_ARCH}"
 
           case "${FLAVOR}" in
             base)
@@ -127,16 +125,16 @@ jobs:
               ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
               ENABLE_SUPABASE_INIT_DEFAULT="false"
               TEST_KIND="supabase"
-              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase"
-              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-${TARGET_ARCH}"
+              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase-${TARGET_ARCH}"
               ;;
             supabase-auto-init)
               TAG_SUFFIX="-supabase-auto-init"
               ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
               ENABLE_SUPABASE_INIT_DEFAULT="true"
               TEST_KIND="supabase"
-              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-auto-init"
-              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase-auto-init"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-auto-init-${TARGET_ARCH}"
+              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase-auto-init-${TARGET_ARCH}"
               ;;
             *)
               echo "Unsupported flavor: ${FLAVOR}" >&2
@@ -147,12 +145,18 @@ jobs:
           IMAGE_BASE="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}"
           RELEASE_IMAGE_REF="${IMAGE_BASE}:${RELEASE_TAG}${TAG_SUFFIX}"
           LOCAL_IMAGE_REF="${IMAGE_BASE}:ci-${GITHUB_SHA::12}${TAG_SUFFIX}"
+          ARCH_TAG_VALUE="${RELEASE_TAG}${TAG_SUFFIX}-${TARGET_ARCH}"
+          ARCH_IMAGE_REF="${IMAGE_BASE}:${ARCH_TAG_VALUE}"
+          TARGET_PLATFORM="linux/${TARGET_ARCH}"
 
           {
             echo "image_base=${IMAGE_BASE}"
             echo "release_image_ref=${RELEASE_IMAGE_REF}"
             echo "local_image_ref=${LOCAL_IMAGE_REF}"
             echo "tag_value=${RELEASE_TAG}${TAG_SUFFIX}"
+            echo "arch_tag_value=${ARCH_TAG_VALUE}"
+            echo "arch_image_ref=${ARCH_IMAGE_REF}"
+            echo "target_platform=${TARGET_PLATFORM}"
             echo "test_kind=${TEST_KIND}"
             echo "base_cache_scope=${BASE_CACHE_SCOPE}"
             echo "variant_cache_scope=${VARIANT_CACHE_SCOPE}"
@@ -230,7 +234,252 @@ jobs:
           SPILO_SUPABASE_TEST_IMAGE: ${{ steps.vars.outputs.local_image_ref }}
         run: bash postgres-appliance/tests/test_supabase.sh
 
-      - name: Compute tags and labels
+      - name: Compute platform tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.vars.outputs.image_base }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.tag_value }}
+            type=raw,value=${{ steps.vars.outputs.arch_tag_value }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Publish amd64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          push: true
+          platforms: ${{ steps.vars.outputs.target_platform }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          provenance: mode=max
+          sbom: true
+          cache-from: ${{ steps.vars.outputs.cache_from }}
+          cache-to: ${{ steps.vars.outputs.cache_to }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  release-arm64:
+    name: Release qemu arm64 PG${{ matrix.pg_major }} ${{ matrix.flavor }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_major: ["15", "16", "17"]
+        flavor: ["base", "supabase", "supabase-auto-init"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          version: latest
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image and cache variables
+        id: vars
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          PG_MAJOR: ${{ matrix.pg_major }}
+          FLAVOR: ${{ matrix.flavor }}
+          TARGET_ARCH: arm64
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          BASE_CACHE_SCOPE="spilo-${PG_MAJOR}-base-${TARGET_ARCH}"
+          BASE_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-${TARGET_ARCH}"
+
+          case "${FLAVOR}" in
+            base)
+              TAG_SUFFIX=""
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="false"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              VARIANT_CACHE_SCOPE="${BASE_CACHE_SCOPE}"
+              VARIANT_CACHE_REF="${BASE_CACHE_REF}"
+              ;;
+            supabase)
+              TAG_SUFFIX="-supabase"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="false"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-${TARGET_ARCH}"
+              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase-${TARGET_ARCH}"
+              ;;
+            supabase-auto-init)
+              TAG_SUFFIX="-supabase-auto-init"
+              ENABLE_SUPABASE_EXTENSIONS_DEFAULT="true"
+              ENABLE_SUPABASE_INIT_DEFAULT="true"
+              VARIANT_CACHE_SCOPE="spilo-${PG_MAJOR}-supabase-auto-init-${TARGET_ARCH}"
+              VARIANT_CACHE_REF="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}:buildcache-supabase-auto-init-${TARGET_ARCH}"
+              ;;
+            *)
+              echo "Unsupported flavor: ${FLAVOR}" >&2
+              exit 1
+              ;;
+          esac
+
+          IMAGE_BASE="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}"
+          RELEASE_IMAGE_REF="${IMAGE_BASE}:${RELEASE_TAG}${TAG_SUFFIX}"
+          ARCH_TAG_VALUE="${RELEASE_TAG}${TAG_SUFFIX}-${TARGET_ARCH}"
+          ARCH_IMAGE_REF="${IMAGE_BASE}:${ARCH_TAG_VALUE}"
+          TARGET_PLATFORM="linux/${TARGET_ARCH}"
+
+          {
+            echo "image_base=${IMAGE_BASE}"
+            echo "release_image_ref=${RELEASE_IMAGE_REF}"
+            echo "tag_value=${RELEASE_TAG}${TAG_SUFFIX}"
+            echo "arch_tag_value=${ARCH_TAG_VALUE}"
+            echo "arch_image_ref=${ARCH_IMAGE_REF}"
+            echo "target_platform=${TARGET_PLATFORM}"
+
+            echo "build_args<<EOF"
+            echo "PGVERSION=${PG_MAJOR}"
+            echo "ENABLE_SUPABASE_EXTENSIONS_DEFAULT=${ENABLE_SUPABASE_EXTENSIONS_DEFAULT}"
+            echo "ENABLE_SUPABASE_INIT_DEFAULT=${ENABLE_SUPABASE_INIT_DEFAULT}"
+            echo "EOF"
+
+            echo "cache_from<<EOF"
+            echo "type=gha,scope=${BASE_CACHE_SCOPE}"
+            if [[ "${VARIANT_CACHE_SCOPE}" != "${BASE_CACHE_SCOPE}" ]]; then
+              echo "type=gha,scope=${VARIANT_CACHE_SCOPE}"
+            fi
+            echo "type=registry,ref=${BASE_CACHE_REF}"
+            if [[ "${VARIANT_CACHE_REF}" != "${BASE_CACHE_REF}" ]]; then
+              echo "type=registry,ref=${VARIANT_CACHE_REF}"
+            fi
+            echo "EOF"
+
+            echo "cache_to<<EOF"
+            echo "type=gha,scope=${VARIANT_CACHE_SCOPE},mode=max,ignore-error=true"
+            echo "type=registry,ref=${VARIANT_CACHE_REF},mode=max,ignore-error=true"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute platform tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.vars.outputs.image_base }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.arch_tag_value }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Publish qemu arm64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./postgres-appliance
+          push: true
+          platforms: ${{ steps.vars.outputs.target_platform }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: ${{ steps.vars.outputs.build_args }}
+          provenance: mode=max
+          sbom: true
+          cache-from: ${{ steps.vars.outputs.cache_from }}
+          cache-to: ${{ steps.vars.outputs.cache_to }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-manifest:
+    name: Publish multiarch manifest PG${{ matrix.pg_major }} ${{ matrix.flavor }}
+    needs:
+      - prepare
+      - release-amd64
+      - release-arm64
+    if: needs['release-amd64'].result == 'success' && needs['release-arm64'].result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_major: ["15", "16", "17"]
+        flavor: ["base", "supabase", "supabase-auto-init"]
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          version: latest
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image refs
+        id: vars
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          PG_MAJOR: ${{ matrix.pg_major }}
+          FLAVOR: ${{ matrix.flavor }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          case "${FLAVOR}" in
+            base)
+              TAG_SUFFIX=""
+              ;;
+            supabase)
+              TAG_SUFFIX="-supabase"
+              ;;
+            supabase-auto-init)
+              TAG_SUFFIX="-supabase-auto-init"
+              ;;
+            *)
+              echo "Unsupported flavor: ${FLAVOR}" >&2
+              exit 1
+              ;;
+          esac
+
+          IMAGE_BASE="${REGISTRY}/${IMAGE_NAME}-${PG_MAJOR}"
+          RELEASE_IMAGE_REF="${IMAGE_BASE}:${RELEASE_TAG}${TAG_SUFFIX}"
+          AMD64_IMAGE_REF="${IMAGE_BASE}:${RELEASE_TAG}${TAG_SUFFIX}-amd64"
+          ARM64_IMAGE_REF="${IMAGE_BASE}:${RELEASE_TAG}${TAG_SUFFIX}-arm64"
+
+          {
+            echo "image_base=${IMAGE_BASE}"
+            echo "tag_value=${RELEASE_TAG}${TAG_SUFFIX}"
+            echo "release_image_ref=${RELEASE_IMAGE_REF}"
+            echo "amd64_image_ref=${AMD64_IMAGE_REF}"
+            echo "arm64_image_ref=${ARM64_IMAGE_REF}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute manifest labels
         id: meta
         uses: docker/metadata-action@v6
         with:
@@ -243,21 +492,36 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Publish multiarch image
-        uses: docker/build-push-action@v7
-        with:
-          context: ./postgres-appliance
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          build-args: ${{ steps.vars.outputs.build_args }}
-          provenance: mode=max
-          sbom: true
-          cache-from: ${{ steps.vars.outputs.cache_from }}
-          cache-to: ${{ steps.vars.outputs.cache_to }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multiarch manifest
+        shell: bash
+        env:
+          RELEASE_IMAGE_REF: ${{ steps.vars.outputs.release_image_ref }}
+          AMD64_IMAGE_REF: ${{ steps.vars.outputs.amd64_image_ref }}
+          ARM64_IMAGE_REF: ${{ steps.vars.outputs.arm64_image_ref }}
+          OCI_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+
+          annotation_args=()
+          while IFS= read -r label; do
+            if [[ -n "$label" ]]; then
+              annotation_args+=(--annotation "index:${label}")
+            fi
+          done <<< "$OCI_LABELS"
+
+          docker buildx imagetools create \
+            "${annotation_args[@]}" \
+            --tag "$RELEASE_IMAGE_REF" \
+            "$AMD64_IMAGE_REF" \
+            "$ARM64_IMAGE_REF"
+
+      - name: Inspect multiarch manifest
+        shell: bash
+        env:
+          RELEASE_IMAGE_REF: ${{ steps.vars.outputs.release_image_ref }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$RELEASE_IMAGE_REF"
 
   mirror-helper-images:
     name: Mirror KubeBlocks helper images
@@ -313,16 +577,20 @@ jobs:
     name: Release summary
     if: always()
     needs:
-      - release
+      - release-amd64
+      - release-arm64
+      - publish-manifest
       - mirror-helper-images
     runs-on: ubuntu-24.04
     steps:
       - name: Report results
         shell: bash
         run: |
-          echo "release result: ${{ needs.release.result }}"
+          echo "release-amd64 result: ${{ needs['release-amd64'].result }}"
+          echo "release-arm64 result: ${{ needs['release-arm64'].result }}"
+          echo "publish-manifest result: ${{ needs['publish-manifest'].result }}"
           echo "mirror-helper-images result: ${{ needs['mirror-helper-images'].result }}"
 
       - name: Fail summary if any required job failed
-        if: needs.release.result != 'success' || needs['mirror-helper-images'].result != 'success'
+        if: needs['release-amd64'].result != 'success' || needs['mirror-helper-images'].result != 'success' || (needs['release-arm64'].result == 'success' && needs['publish-manifest'].result != 'success')
         run: exit 1
